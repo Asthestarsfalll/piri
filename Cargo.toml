@@ -3,7 +3,7 @@ name = "piri"
 version = "0.1.0"
 edition = "2021"
 authors = ["Starfall"]
-description = "A daemon for managing niri compositor with extensible command system"
+description = "Extend niri compositor capabilities with extensible command system and plugins"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
@@ -20,4 +20,5 @@ env_logger = "0.11"
 shellexpand = "3.1"
 libc = "0.2"
 niri-ipc = "25.11"
+async-trait = "0.1"
 

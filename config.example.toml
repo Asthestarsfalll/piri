@@ -6,9 +6,31 @@
 # If not specified, will use $XDG_RUNTIME_DIR/niri or /tmp/niri
 # socket_path = "/tmp/niri"
 
+# Plugin control: enable/disable plugins
+# If not specified, plugins are disabled by default
+[piri.plugins]
+# Enable/disable scratchpads plugin (default: false)
+scratchpads = true
+# Enable/disable empty plugin (default: false)
+empty = true
+
 [piri.scratchpad]
 default_size = "40% 60%"
 default_margin = 50
+
+# Plugins configuration
+# Empty plugin: executes commands when switching to empty workspaces
+# Format: [empty.{workspace}]
+# Workspace identifier can be:
+# - name (String): workspace name, e.g., "main", "work"
+# - idx (u8): workspace index, e.g., "1", "2", "3"
+# Note: Matching order is name first, then idx. ID (u64) is not used for matching.
+[empty.1] # workspace index
+command = "notify-send 'Workspace 1 is empty'"
+
+[empty.browser] # workspace name
+command = "google-chrome-stable"
+
 
 # Scratchpads configuration
 # Format: [scratchpads.{name}]

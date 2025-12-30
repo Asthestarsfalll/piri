@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use log::info;
+use log::{info, warn};
 use std::ffi::CString;
 use std::os::unix::process::CommandExt;
 use std::sync::Arc;
@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 
 use crate::commands::CommandHandler;
 use crate::ipc::{handle_request, IpcServer};
+use crate::plugins::PluginManager;
 
 /// Set the process name (for Linux)
 /// This sets the thread name, which is what shows up in `ps -o comm=`
@@ -37,7 +38,11 @@ fn set_process_name(_name: &str) {
 }
 
 /// Run daemon main loop (internal function)
-async fn run_daemon_loop(ipc_server: IpcServer, handler: CommandHandler) -> Result<()> {
+async fn run_daemon_loop(
+    ipc_server: IpcServer,
+    handler: CommandHandler,
+    plugin_manager: Arc<Mutex<PluginManager>>,
+) -> Result<()> {
     eprintln!("[DAEMON] run_daemon_loop: Starting...");
 
     // Wrap handler in Arc<Mutex<>> for shared access
@@ -53,6 +58,10 @@ async fn run_daemon_loop(ipc_server: IpcServer, handler: CommandHandler) -> Resu
     let mut sigint = signal::unix::signal(signal::unix::SignalKind::interrupt())?;
 
     eprintln!("[DAEMON] run_daemon_loop: Entering main loop, waiting for connections...");
+
+    // Note: Plugins are now event-driven, so we don't need a polling task
+    // Event listeners are started in plugin init() methods
+
     // Main daemon loop
     loop {
         tokio::select! {
@@ -89,6 +98,13 @@ async fn run_daemon_loop(ipc_server: IpcServer, handler: CommandHandler) -> Resu
         }
     }
 
+    // Shutdown plugins (optional - runtime shutdown will cancel all tasks anyway)
+    // But we call it for any cleanup plugins might need
+    info!("Shutting down plugins...");
+    if let Err(e) = plugin_manager.lock().await.shutdown().await {
+        warn!("Error shutting down plugins: {}", e);
+    }
+
     // Cleanup socket
     ipc_server.cleanup();
     info!("Daemon stopped");
@@ -96,7 +112,7 @@ async fn run_daemon_loop(ipc_server: IpcServer, handler: CommandHandler) -> Resu
 }
 
 /// Run daemon (internal function, can be called with or without daemonizing)
-async fn run_daemon(handler: CommandHandler) -> Result<()> {
+async fn run_daemon(mut handler: CommandHandler) -> Result<()> {
     eprintln!("[DAEMON] run_daemon: Creating IPC server...");
     info!("Creating IPC server...");
 
@@ -115,6 +131,21 @@ async fn run_daemon(handler: CommandHandler) -> Result<()> {
             return Err(anyhow::anyhow!(error_msg));
         }
     };
+
+    eprintln!("[DAEMON] run_daemon: Initializing plugins...");
+    info!("Initializing plugins...");
+
+    // Initialize plugin manager
+    let config = handler.config().clone();
+    let niri = handler.niri().clone();
+    let mut plugin_manager = PluginManager::new();
+    if let Err(e) = plugin_manager.init(niri, &config).await {
+        warn!("Failed to initialize plugins: {}", e);
+    }
+
+    // Share plugin manager with handler
+    let plugin_manager = Arc::new(Mutex::new(plugin_manager));
+    handler.set_plugin_manager(plugin_manager.clone());
 
     eprintln!("[DAEMON] run_daemon: Setting up signal handlers...");
     info!("Setting up signal handlers...");
@@ -139,7 +170,7 @@ async fn run_daemon(handler: CommandHandler) -> Result<()> {
     set_process_name("piri");
 
     eprintln!("[DAEMON] run_daemon: About to enter run_daemon_loop");
-    let result = run_daemon_loop(ipc_server, handler).await;
+    let result = run_daemon_loop(ipc_server, handler, plugin_manager).await;
     eprintln!(
         "[DAEMON] run_daemon: run_daemon_loop returned: {:?}",
         result

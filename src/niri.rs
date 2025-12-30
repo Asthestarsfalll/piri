@@ -148,6 +148,11 @@ impl NiriIpc {
         }
     }
 
+    /// Get all workspaces (public method for plugins)
+    pub fn get_workspaces(&self) -> Result<Vec<niri_ipc::Workspace>> {
+        self.get_workspaces_for_mapping()
+    }
+
     /// Get focused output
     pub fn get_focused_output(&self) -> Result<Output> {
         let mut socket = self.connect()?;
@@ -536,6 +541,22 @@ impl NiriIpc {
         tokio::task::spawn_blocking(move || niri.get_window_position(window_id))
             .await
             .context("Task join error")?
+    }
+
+    /// Create an event stream socket for listening to niri events
+    /// This returns a socket that has already requested the event stream
+    pub fn create_event_stream_socket(&self) -> Result<Socket> {
+        let mut socket = self.connect()?;
+
+        // Request event stream
+        match socket.send(Request::EventStream)? {
+            Reply::Ok(_) => {}
+            Reply::Err(err) => {
+                anyhow::bail!("Failed to request event stream: {}", err);
+            }
+        }
+
+        Ok(socket)
     }
 }
 

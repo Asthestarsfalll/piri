@@ -209,42 +209,55 @@ pub async fn handle_request(
     // Handle request
     let response = {
         let mut handler = handler.lock().await;
-        match request {
-            IpcRequest::ScratchpadToggle { name } => {
-                match handler.handle_scratchpad_toggle(&name).await {
-                    Ok(()) => IpcResponse::Success,
-                    Err(e) => {
-                        log::error!("Error handling scratchpad toggle: {}", e);
-                        IpcResponse::Error(e.to_string())
-                    }
+
+        // Try to handle through plugins first
+        if let Some(plugin_result) = handler.handle_ipc_request_through_plugins(&request).await {
+            match plugin_result {
+                Ok(()) => IpcResponse::Success,
+                Err(e) => {
+                    log::error!("Error handling request through plugins: {}", e);
+                    IpcResponse::Error(e.to_string())
                 }
             }
-            IpcRequest::ScratchpadAdd { name, direction } => {
-                match handler.handle_scratchpad_add(&name, &direction).await {
-                    Ok(()) => IpcResponse::Success,
-                    Err(e) => {
-                        log::error!("Error handling scratchpad add: {}", e);
-                        IpcResponse::Error(e.to_string())
+        } else {
+            // Fallback to direct handler methods for non-plugin requests
+            match request {
+                IpcRequest::Reload => {
+                    let config_path = handler.config_path().clone();
+                    // Reload config and update plugin configs
+                    match handler.reload_config(&config_path).await {
+                        Ok(()) => {
+                            // Update plugin configs after reload
+                            let config = handler.config().clone();
+                            let niri = handler.niri().clone();
+                            let mut pm = handler.plugin_manager().lock().await;
+                            // Reinitialize plugins with new config
+                            if let Err(e) = pm.init(niri, &config).await {
+                                log::warn!(
+                                    "Failed to reinitialize plugins after config reload: {}",
+                                    e
+                                );
+                            }
+                            IpcResponse::Success
+                        }
+                        Err(e) => {
+                            log::error!("Error reloading config: {}", e);
+                            IpcResponse::Error(e.to_string())
+                        }
                     }
                 }
-            }
-            IpcRequest::Reload => {
-                let config_path = handler.config_path().clone();
-                match handler.reload_config(&config_path).await {
-                    Ok(()) => IpcResponse::Success,
-                    Err(e) => {
-                        log::error!("Error reloading config: {}", e);
-                        IpcResponse::Error(e.to_string())
+                IpcRequest::Ping => IpcResponse::Pong,
+                IpcRequest::Shutdown => {
+                    // Notify the daemon loop to shutdown
+                    if let Some(ref shutdown) = shutdown {
+                        shutdown.notify_one();
                     }
+                    IpcResponse::Success
                 }
-            }
-            IpcRequest::Ping => IpcResponse::Pong,
-            IpcRequest::Shutdown => {
-                // Notify the daemon loop to shutdown
-                if let Some(ref shutdown) = shutdown {
-                    shutdown.notify_one();
+                _ => {
+                    // Should not reach here if plugins handle all scratchpad requests
+                    IpcResponse::Error("Request not handled".to_string())
                 }
-                IpcResponse::Success
             }
         }
     };

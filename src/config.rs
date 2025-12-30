@@ -13,6 +13,8 @@ pub struct Config {
     pub piri: PiriConfig,
     #[serde(flatten)]
     pub scratchpads: HashMap<String, ScratchpadConfig>,
+    #[serde(flatten)]
+    pub empty: HashMap<String, EmptyWorkspaceConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,12 +33,59 @@ impl Default for NiriConfig {
 pub struct PiriConfig {
     #[serde(default)]
     pub scratchpad: ScratchpadDefaults,
+    #[serde(default)]
+    pub plugins: PluginsConfig,
 }
 
 impl Default for PiriConfig {
     fn default() -> Self {
         Self {
             scratchpad: ScratchpadDefaults::default(),
+            plugins: PluginsConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginsConfig {
+    /// Enable/disable scratchpads plugin (default: true if scratchpads are configured)
+    #[serde(default)]
+    pub scratchpads: Option<bool>,
+    /// Enable/disable empty plugin (default: true if empty workspace rules are configured)
+    #[serde(default)]
+    pub empty: Option<bool>,
+    /// Empty plugin configuration (for backward compatibility)
+    #[serde(rename = "empty_config", default)]
+    pub empty_config: Option<EmptyPluginConfig>,
+}
+
+impl Default for PluginsConfig {
+    fn default() -> Self {
+        Self {
+            scratchpads: None,
+            empty: None,
+            empty_config: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmptyWorkspaceConfig {
+    /// Command to execute when switching to this empty workspace
+    pub command: String,
+}
+
+/// Empty plugin config (for backward compatibility and internal use)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmptyPluginConfig {
+    /// Map of workspace identifier to command to execute when workspace is empty
+    pub workspaces: std::collections::HashMap<String, String>,
+}
+
+impl Default for EmptyPluginConfig {
+    fn default() -> Self {
+        Self {
+            workspaces: std::collections::HashMap::new(),
         }
     }
 }
@@ -136,6 +185,7 @@ impl Config {
             niri: NiriConfig::default(),
             piri: PiriConfig::default(),
             scratchpads: HashMap::new(),
+            empty: HashMap::new(),
         };
 
         // Extract niri config
@@ -166,6 +216,70 @@ impl Config {
                         }
                     }
                 }
+
+                // Extract plugins config
+                if let Some(plugins_table) = piri_map.get("plugins") {
+                    if let Some(plugins_map) = plugins_table.as_table() {
+                        // Extract plugin enable/disable flags
+                        if let Some(scratchpads_enabled) = plugins_map.get("scratchpads") {
+                            if let Some(enabled) = scratchpads_enabled.as_bool() {
+                                config.piri.plugins.scratchpads = Some(enabled);
+                            }
+                        }
+                        if let Some(empty_value) = plugins_map.get("empty") {
+                            // Check if it's a boolean (enable/disable flag)
+                            if let Some(enabled) = empty_value.as_bool() {
+                                config.piri.plugins.empty = Some(enabled);
+                            }
+                            // Check if it's a table (old format: [piri.plugins.empty.workspaces])
+                            else if let Some(empty_map) = empty_value.as_table() {
+                                if let Some(workspaces_table) = empty_map.get("workspaces") {
+                                    if let Some(workspaces_map) = workspaces_table.as_table() {
+                                        let mut empty_config = EmptyPluginConfig::default();
+                                        for (key, value) in workspaces_map.iter() {
+                                            if let Some(cmd_str) = value.as_str() {
+                                                empty_config
+                                                    .workspaces
+                                                    .insert(key.clone(), cmd_str.to_string());
+                                            }
+                                        }
+                                        config.piri.plugins.empty_config = Some(empty_config);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Extract empty plugin config (new format: [empty.{workspace}])
+        // In TOML, [empty.1] creates a nested structure: { "empty": { "1": { ... } } }
+        if let Some(empty_table) = doc.get("empty") {
+            if let Some(empty_map) = empty_table.as_table() {
+                for (workspace, value) in empty_map.iter() {
+                    if let Some(workspace_table) = value.as_table() {
+                        if let Some(command) = workspace_table.get("command") {
+                            if let Some(cmd_str) = command.as_str() {
+                                config.empty.insert(
+                                    workspace.clone(),
+                                    EmptyWorkspaceConfig {
+                                        command: cmd_str.to_string(),
+                                    },
+                                );
+                                log::debug!(
+                                    "Parsed empty workspace config: {} -> {}",
+                                    workspace,
+                                    cmd_str
+                                );
+                            }
+                        }
+                    }
+                }
+                log::info!(
+                    "Parsed {} empty workspace configurations",
+                    config.empty.len()
+                );
             }
         }
 
@@ -202,7 +316,52 @@ impl Default for Config {
             niri: NiriConfig::default(),
             piri: PiriConfig::default(),
             scratchpads: HashMap::new(),
+            empty: HashMap::new(),
         }
+    }
+}
+
+impl Config {
+    /// Get empty plugin config (converts new format to old format for plugin compatibility)
+    pub fn get_empty_plugin_config(&self) -> Option<EmptyPluginConfig> {
+        // Check new format first
+        if !self.empty.is_empty() {
+            let mut workspaces = std::collections::HashMap::new();
+            for (workspace, config) in &self.empty {
+                workspaces.insert(workspace.clone(), config.command.clone());
+            }
+            log::debug!(
+                "Empty plugin: found {} workspaces in new format",
+                workspaces.len()
+            );
+            return Some(EmptyPluginConfig { workspaces });
+        }
+
+        // Fallback to old format
+        if let Some(ref old_config) = self.piri.plugins.empty_config {
+            log::debug!(
+                "Empty plugin: found {} workspaces in old format",
+                old_config.workspaces.len()
+            );
+            return Some(old_config.clone());
+        }
+
+        log::debug!("Empty plugin: no configuration found");
+        None
+    }
+
+    /// Check if scratchpads plugin should be enabled
+    pub fn is_scratchpads_enabled(&self) -> bool {
+        // If explicitly set, use that value
+        // Otherwise, default to false (disabled)
+        self.piri.plugins.scratchpads.unwrap_or(false)
+    }
+
+    /// Check if empty plugin should be enabled
+    pub fn is_empty_enabled(&self) -> bool {
+        // If explicitly set, use that value
+        // Otherwise, default to false (disabled)
+        self.piri.plugins.empty.unwrap_or(false)
     }
 }
 

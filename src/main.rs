@@ -10,6 +10,7 @@ mod config;
 mod daemon;
 mod ipc;
 mod niri;
+mod plugins;
 mod scratchpads;
 
 use commands::CommandHandler;
@@ -116,7 +117,12 @@ fn main() -> Result<()> {
     }));
 
     let rt = create_runtime();
-    if let Err(e) = rt.block_on(async_main()) {
+    let result = rt.block_on(async_main());
+
+    // Shutdown the runtime to ensure all tasks are dropped
+    rt.shutdown_background();
+
+    if let Err(e) = result {
         eprintln!("Error in main: {}", e);
         eprintln!("Error chain: {:?}", e);
         std::process::exit(1);

@@ -14,17 +14,16 @@ Contributions, suggestions, bug reports and comments are welcome.
 
 > **Note**: This project was entirely developed with the assistance of [Cursor](https://cursor.sh/) AI code editor.
 
-## Features
+## Supported Plugins
 
-- 🚀 **Daemon Mode**: Can run as a daemon to provide continuous service
-- 🔧 **Niri IPC Wrapper**: Complete niri IPC command wrapper for easy interaction with niri
-- 📝 **TOML Configuration**: TOML-formatted configuration files that are easy to read and edit
-- 🎯 **Extensible Command System**: Supports `piri sub_command` format for easy addition of new features
-- 📦 **Scratchpads**: Powerful window management feature for quick access to frequently used applications (see [Scratchpads](#scratchpads) section for details)
+- 📦 **Scratchpads**: Powerful window management feature for quick access to frequently used applications (see [Scratchpads documentation](docs/en/plugins/scratchpads.md) for details)
+- 🔌 **Empty**: Automatically execute commands when switching to empty workspaces, useful for automating workflows (see [Empty documentation](docs/en/plugins/empty.md) for details)
 
-## Installation
+## Quick Start
 
-### Using Install Script (Recommended)
+### Installation
+
+#### Using Install Script (Recommended)
 
 The easiest way is to use the provided install script:
 
@@ -40,7 +39,7 @@ The install script will automatically:
 
 If `~/.local/bin` is not in your PATH, the script will prompt you to add it.
 
-### Using Cargo
+#### Using Cargo
 
 ```bash
 # Install to user directory (recommended, no root required)
@@ -58,7 +57,7 @@ export PATH="$PATH:$HOME/.cargo/bin"
 
 You can add this command to your shell configuration file (e.g., `~/.bashrc` or `~/.zshrc`).
 
-## Configuration
+### Configuration
 
 Copy the example configuration file to the config directory:
 
@@ -69,20 +68,6 @@ cp config.example.toml ~/.config/niri/piri.toml
 
 Then edit `~/.config/niri/piri.toml` to configure your features.
 
-### Basic Configuration Example
-
-```toml
-[niri]
-# socket_path = "/tmp/niri"  # Optional, defaults to $XDG_RUNTIME_DIR/niri
-
-[piri.scratchpad]
-# Default size and margin for dynamically added scratchpads
-default_size = "40% 60%"  # Default size, format: "width% height%"
-default_margin = 50        # Default margin (pixels)
-```
-
-For more configuration options, please refer to the detailed documentation for each feature module.
-
 ## Usage
 
 ### Starting the Daemon
@@ -92,14 +77,17 @@ For more configuration options, please refer to the detailed documentation for e
 piri daemon
 ```
 
+```bash
+# More debug logs
+piri --debug daemon
+```
+
 ### Reloading Configuration
 
 ```bash
 # Reload configuration file (no need to restart daemon)
 piri reload
 ```
-
-Note: After reloading, new configuration takes effect immediately. Existing scratchpad windows will continue using old configuration, while newly launched scratchpads will use the new configuration.
 
 ### Shell Completion
 
@@ -116,178 +104,68 @@ piri completion zsh > ~/.zsh_completion.d/_piri
 piri completion fish > ~/.config/fish/completions/piri.fish
 ```
 
-## Scratchpads
+## Plugins
 
-Scratchpads is a powerful window management feature that allows you to quickly show and hide windows of frequently used applications. It supports cross-workspace and cross-monitor functionality, so you can quickly access your scratchpad windows regardless of which workspace or monitor you're on.
+### Scratchpads
 
-### Demo Video
+![](./assets/scratchpads.mp4)
 
-![Scratchpads Demo Video](assets/scratchpads.mp4)
+Quickly show and hide windows of frequently used applications. Supports cross-workspace and cross-monitor.
 
-### Configuration
-
-Add `[scratchpads.{name}]` sections to your configuration file to configure scratchpads. Each scratchpad requires a unique name.
-
-#### Configuration Example
-
+**Configuration Example**:
 ```toml
+[piri.plugins]
+scratchpads = true
+
 [scratchpads.term]
 direction = "fromRight"
 command = "GTK_IM_MODULE=wayland ghostty --class=float.dropterm"
 app_id = "float.dropterm"
 size = "40% 60%"
 margin = 50
-
-[scratchpads.calc]
-direction = "fromBottom"
-command = "gnome-calculator"
-app_id = "gnome-calculator"
-size = "50% 40%"
-margin = 100
 ```
 
-#### Configuration Parameters
-
-- `direction` (required): Direction from which the window appears
-  - `fromTop`: Slide in from top
-  - `fromBottom`: Slide in from bottom
-  - `fromLeft`: Slide in from left
-  - `fromRight`: Slide in from right
-
-- `command` (required): Full command string to launch the application, can include environment variables and arguments
-
-- `app_id` (required): Application ID used to match windows. This is the key identifier that niri uses to identify windows
-
-- `size` (required): Window size in format `"width% height%"`, e.g., `"40% 60%"` means 40% of screen width and 60% of screen height
-
-- `margin` (required): Margin from screen edge in pixels
-
-### Usage
-
-#### Toggle Scratchpad Visibility
-
+**Quick Usage**:
 ```bash
+# Toggle scratchpad show/hide
 piri scratchpads {name} toggle
-```
 
-Examples:
-
-```bash
-# Toggle terminal scratchpad
-piri scratchpads term toggle
-
-# Toggle calculator scratchpad
-piri scratchpads calc toggle
-```
-
-#### Add Current Window as Scratchpad
-
-You can quickly add the currently focused window as a scratchpad without editing the configuration file:
-
-```bash
+# Dynamically add current window as scratchpad
 piri scratchpads {name} add {direction}
 ```
 
-Parameters:
-- `{name}`: Name of the scratchpad (unique identifier)
-- `{direction}`: Direction from which the window appears, options:
-  - `fromTop`: Slide in from top
-  - `fromBottom`: Slide in from bottom
-  - `fromLeft`: Slide in from left
-  - `fromRight`: Slide in from right
+For detailed documentation, please refer to [Scratchpads documentation](docs/en/plugins/scratchpads.md).
 
-Example:
+### Empty
 
-```bash
-# Add current window as a scratchpad named "mypad", sliding in from right
-piri scratchpads mypad add fromRight
+Automatically execute commands when switching to empty workspaces, useful for automating workflows.
+
+> **Reference**: This functionality is similar to [Hyprland's `on-created-empty` workspace rule](https://wiki.hypr.land/Configuring/Workspace-Rules/#rules).
+
+**Configuration Example**:
+```toml
+[piri.plugins]
+empty = true
+
+# Execute command when switching to workspace 1 if it's empty
+[empty.1]
+command = "alacritty"
+
+# Use workspace name
+[empty.main]
+command = "firefox"
 ```
 
-Dynamically added scratchpads will use the default size and margin set in the `[piri.scratchpad]` section of the configuration file. After adding, you can use `piri scratchpads {name} toggle` to show/hide it.
+**Workspace Identifiers**: Supports matching by workspace name (e.g., `"main"`) or index (e.g., `"1"`).
 
-#### How It Works
+For detailed documentation, please refer to [Plugin System documentation](docs/en/plugins/empty.md).
 
-1. **First Launch**: When executing `piri scratchpads {name} toggle`, if the window doesn't exist, it launches the application specified in the configuration
+## Documentation
 
-2. **Window Registration**: After finding the window, it sets it to floating mode and moves it off-screen
-
-3. **Show/Hide**: 
-   - **Show**: 
-     - Records the currently focused window
-     - Moves the window to the currently focused output and workspace, positioning it according to configured direction and size
-     - Transfers focus to the scratchpad window
-     - **Cross-workspace and cross-monitor support**: Regardless of which workspace or monitor the scratchpad window was originally on, it will automatically move to the currently focused location
-   - **Hide**: 
-     - Moves the window off-screen
-     - Restores focus:
-       - If the previously focused window is in the current workspace, focus it
-       - If not in the current workspace, and there are other windows in the current workspace, focus the middle window
-
-### Features
-
-- ✅ **Cross-workspace support**: Access your scratchpad from any workspace
-- ✅ **Cross-monitor support**: Works in multi-monitor setups, scratchpad automatically appears on the currently focused monitor
-- ✅ **Smart focus management**: Automatically focuses when showing, intelligently restores previous focus when hiding
-- ✅ **Flexible configuration**: Customize window size, position, and animation direction
-- ✅ **Dynamic addition**: Quickly add the currently focused window as a scratchpad without editing configuration files
-
-## How It Works
-
-### Architecture
-
-The project uses a modular design for easy extension:
-
-- `config.rs`: Configuration management module
-- `niri.rs`: Niri IPC wrapper module
-- `commands.rs`: Command processing system
-- `scratchpads.rs`: Scratchpads feature implementation
-- `daemon.rs`: Daemon management
-- `ipc.rs`: Inter-process communication (for client-daemon communication)
-
-## Extensibility
-
-### Adding New Subcommands
-
-1. Add a new command to the `Commands` enum in `src/main.rs`
-2. Add a handler method in `CommandHandler` in `src/commands.rs`
-3. Implement the corresponding feature module
-4. Add corresponding IPC message types in `src/ipc.rs` (if needed)
-
-### Adding New Configuration Options
-
-1. Add fields to the `Config` struct in `src/config.rs`
-2. Update the TOML configuration file example
-
-## Development
-
-### Code Formatting
-
-The project uses `rustfmt` for code formatting. The configuration file is `rustfmt.toml`.
-
-#### Installing rustfmt
-
-```bash
-rustup component add rustfmt
-```
-
-#### Formatting Code
-
-```bash
-# Format all code
-cargo fmt
-
-# Check code format (without modifying files)
-cargo fmt -- --check
-```
-
-## Dependencies
-
-- `clap`: Command-line argument parsing
-- `serde` / `toml`: Configuration serialization/deserialization
-- `tokio`: Async runtime
-- `anyhow`: Error handling
-- `log` / `env_logger`: Logging system
-- `niri-ipc`: Niri IPC client library
+- [Architecture](docs/en/architecture.md) - Project architecture and how it works
+- [Scratchpads](docs/en/plugins/scratchpads.md) - Detailed Scratchpads documentation
+- [Plugin System](docs/en/plugins/plugins.md) - Detailed plugin system documentation
+- [Development Guide](docs/en/development.md) - Development, extension, and contribution guide
 
 ## License
 
@@ -295,4 +173,4 @@ MIT License
 
 ## References
 
-This project is inspired by [Pyprland](https://github.com/hyprland-community/pyprland). Pyprland is an excellent project that provides extension capabilities for the Hyprland compositor, offering a plethora of plugins to enhance user experience. If you use Hyprland, we highly recommend trying Pyprland.
+This project is inspired by [Pyprland](https://github.com/hyprland-community/pyprland). Pyprland is an excellent project that provides extension capabilities for the Hyprland compositor, offering a plethora of plugins to enhance user experience.
