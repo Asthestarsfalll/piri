@@ -1,0 +1,20 @@
+# Piri Configuration File
+# Copy this file to ~/.config/niri/piri.toml
+
+[niri]
+# Optional: Path to niri socket
+# If not specified, will use $XDG_RUNTIME_DIR/niri or /tmp/niri
+# socket_path = "/tmp/niri"
+
+[piri.scratchpad]
+default_size = "40% 60%"
+default_margin = 50
+
+# Scratchpads configuration
+# Format: [scratchpads.{name}]
+[scratchpads.term]
+direction = "fromRight"
+command = "GTK_IM_MODULE=wayland ghostty --class=float.dropterm"
+app_id = "float.dropterm"
+size = "40% 60%"
+margin = 50

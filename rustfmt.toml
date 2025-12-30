@@ -1,0 +1,8 @@
+edition = "2021"
+
+max_width = 100                    # 最大行宽
+tab_spaces = 4                     # Tab 空格数
+newline_style = "Unix"             # 换行风格（Unix LF）
+use_small_heuristics = "Default"   # 使用小的启发式规则
+
+chain_width = 80                   # 链式调用宽度
