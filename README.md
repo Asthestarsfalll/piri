@@ -108,7 +108,7 @@ piri completion fish > ~/.config/fish/completions/piri.fish
 
 ### Scratchpads
 
-![](./assets/scratchpads.mp4)
+![Scratchpads](./assets/scratchpads.mp4)
 
 快速显示和隐藏常用应用程序的窗口。支持跨 workspace 和 monitor。
 
@@ -163,7 +163,6 @@ command = "firefox"
 ## 文档
 
 - [架构设计](docs/architecture.md) - 项目架构和工作原理
-- [Scratchpads](docs/scratchpads.md) - Scratchpads 功能详细说明
 - [插件系统](docs/plugins.md) - 插件系统详细说明
 - [开发指南](docs/development.md) - 开发、扩展和贡献指南
 

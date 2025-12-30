@@ -108,7 +108,7 @@ piri completion fish > ~/.config/fish/completions/piri.fish
 
 ### Scratchpads
 
-![](./assets/scratchpads.mp4)
+![Scratchpads](./assets/scratchpads.mp4)
 
 Quickly show and hide windows of frequently used applications. Supports cross-workspace and cross-monitor.
 
@@ -163,7 +163,6 @@ For detailed documentation, please refer to [Plugin System documentation](docs/e
 ## Documentation
 
 - [Architecture](docs/en/architecture.md) - Project architecture and how it works
-- [Scratchpads](docs/en/plugins/scratchpads.md) - Detailed Scratchpads documentation
 - [Plugin System](docs/en/plugins/plugins.md) - Detailed plugin system documentation
 - [Development Guide](docs/en/development.md) - Development, extension, and contribution guide
 
