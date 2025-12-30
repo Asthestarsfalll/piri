@@ -122,7 +122,7 @@ Scratchpads is a powerful window management feature that allows you to quickly s
 
 ### Demo Video
 
-<video src="assets/scratchpads.mp4" controls width="100%"></video>
+![Scratchpads Demo Video](assets/scratchpads.mp4)
 
 ### Configuration
 

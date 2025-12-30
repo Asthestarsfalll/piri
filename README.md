@@ -122,7 +122,7 @@ Scratchpads 是一个强大的窗口管理功能，允许你快速显示和隐�
 
 ### 演示视频
 
-<video src="assets/scratchpads.mp4" controls width="100%"></video>
+![Scratchpads 演示视频](assets/scratchpads.mp4)
 
 ### 配置
 
