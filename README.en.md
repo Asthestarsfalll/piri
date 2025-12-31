@@ -19,6 +19,7 @@ Contributions, suggestions, bug reports and comments are welcome.
 - 📦 **Scratchpads**: Powerful window management feature for quick access to frequently used applications (see [Scratchpads documentation](docs/en/plugins/scratchpads.md) for details)
 - 🔌 **Empty**: Automatically execute commands when switching to empty workspaces, useful for automating workflows (see [Empty documentation](docs/en/plugins/empty.md) for details)
 - 🎯 **Window Rule**: Automatically move windows to specified workspaces based on `app_id` or `title` (see [Window Rule documentation](docs/en/plugins/window_rule.md) for details)
+- 🔄 **Autofill**: Automatically aligns the last column of windows to the rightmost position when windows are closed (see [Autofill documentation](docs/en/plugins/autofill.md) for details)
 
 ## Quick Start
 
@@ -195,6 +196,26 @@ open_on_workspace = "dev"
 - Pure event-driven, real-time response to window creation
 
 For detailed documentation, please refer to the [Window Rule documentation](docs/en/plugins/window_rule.md).
+
+### Autofill
+
+![Autofill](./assets/autofill.mp4)
+
+Automatically aligns the last column of windows to the rightmost position when windows are closed or layout changes, maintaining a clean and organized window layout.
+
+**Configuration Example**:
+```toml
+[piri.plugins]
+autofill = true
+```
+
+**Features**:
+- Zero configuration required
+- Pure event-driven, real-time response
+- Workspace-aware, only affects the current workspace
+- Automatically maintains clean window layouts
+
+For detailed documentation, please refer to the [Autofill documentation](docs/en/plugins/autofill.md).
 
 ## Documentation
 

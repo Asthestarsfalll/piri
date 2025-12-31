@@ -9,12 +9,10 @@
 # Plugin control: enable/disable plugins
 # If not specified, plugins are disabled by default
 [piri.plugins]
-# Enable/disable scratchpads plugin (default: false)
 scratchpads = true
-# Enable/disable empty plugin (default: false)
 empty = true
-# Enable/disable window_rule plugin (default: true if window rules are configured)
 window_rule = true
+autofill = true
 
 [piri.scratchpad]
 default_size = "40% 60%"

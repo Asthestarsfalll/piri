@@ -19,6 +19,7 @@
 - 📦 **Scratchpads**: 强大的窗口管理功能，支持快速访问常用应用程序（详见 [Scratchpads 文档](docs/zh/plugins/scratchpads.md)）
 - 🔌 **Empty**: 在切换到空 workspace 时自动执行命令，用于自动化工作流程（详见 [Empty 文档](docs/zh/plugins/empty.md)）
 - 🎯 **Window Rule**: 根据窗口的 `app_id` 或 `title` 自动将窗口移动到指定 workspace（详见 [Window Rule 文档](docs/zh/plugins/window_rule.md)）
+- 🔄 **Autofill**: 在窗口关闭或布局改变时自动将最后一列窗口对齐到最右侧位置（详见 [Autofill 文档](docs/zh/plugins/autofill.md)）
 
 ## 快速开始
 
@@ -195,6 +196,26 @@ open_on_workspace = "dev"
 - 纯事件驱动，实时响应窗口创建
 
 详细说明请参考 [Window Rule 文档](docs/zh/plugins/window_rule.md)。
+
+### Autofill
+
+![Autofill](./assets/autofill.mp4)
+
+在窗口关闭或布局改变时自动将最后一列窗口对齐到最右侧位置，保持整洁有序的窗口布局。
+
+**配置示例**：
+```toml
+[piri.plugins]
+autofill = true
+```
+
+**特性**：
+- 无需配置，开箱即用
+- 纯事件驱动，实时响应
+- 工作区感知，仅影响当前工作区
+- 自动保持整洁的窗口布局
+
+详细说明请参考 [Autofill 文档](docs/zh/plugins/autofill.md)。
 
 ## 文档
 

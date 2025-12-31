@@ -59,6 +59,9 @@ pub struct PluginsConfig {
     /// Enable/disable window_rule plugin (default: true if window rules are configured)
     #[serde(default)]
     pub window_rule: Option<bool>,
+    /// Enable/disable autofill plugin (default: false)
+    #[serde(default)]
+    pub autofill: Option<bool>,
     /// Empty plugin configuration (for backward compatibility)
     #[serde(rename = "empty_config", default)]
     pub empty_config: Option<EmptyPluginConfig>,
@@ -70,6 +73,7 @@ impl Default for PluginsConfig {
             scratchpads: None,
             empty: None,
             window_rule: None,
+            autofill: None,
             empty_config: None,
         }
     }
@@ -284,6 +288,11 @@ impl Config {
                                 config.piri.plugins.window_rule = Some(enabled);
                             }
                         }
+                        if let Some(autofill_enabled) = plugins_map.get("autofill") {
+                            if let Some(enabled) = autofill_enabled.as_bool() {
+                                config.piri.plugins.autofill = Some(enabled);
+                            }
+                        }
                     }
                 }
             }
@@ -477,6 +486,13 @@ impl Config {
         // If explicitly set, use that value
         // Otherwise, default to true if rules are configured
         self.piri.plugins.window_rule.unwrap_or(!self.window_rule.is_empty())
+    }
+
+    /// Check if autofill plugin should be enabled
+    pub fn is_autofill_enabled(&self) -> bool {
+        // If explicitly set, use that value
+        // Otherwise, default to false (disabled)
+        self.piri.plugins.autofill.unwrap_or(false)
     }
 }
 

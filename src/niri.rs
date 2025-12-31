@@ -37,6 +37,9 @@ pub struct WindowLayout {
     pub tile_pos: Option<[f64; 2]>,
     #[serde(rename = "window_size")]
     pub window_size: Option<[u32; 2]>,
+    /// Position in scrolling layout: (column index, tile index in column), 1-based
+    #[serde(rename = "pos_in_scrolling_layout")]
+    pub pos_in_scrolling_layout: Option<(usize, usize)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,6 +121,7 @@ impl NiriIpc {
                                     w.layout.window_size.0 as u32,
                                     w.layout.window_size.1 as u32,
                                 ]),
+                                pos_in_scrolling_layout: w.layout.pos_in_scrolling_layout,
                             }),
                         }
                     })

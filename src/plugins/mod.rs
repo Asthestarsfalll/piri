@@ -1,3 +1,4 @@
+pub mod autofill;
 pub mod empty;
 pub mod scratchpads;
 pub mod window_rule;
@@ -119,6 +120,16 @@ impl PluginManager {
             "window_rule",
             config.is_window_rule_enabled(),
             || window_rule::WindowRulePlugin::new(),
+            niri.clone(),
+            config,
+        )
+        .await?;
+
+        // Initialize or update autofill plugin
+        self.init_plugin(
+            "autofill",
+            config.is_autofill_enabled(),
+            || autofill::AutofillPlugin::new(),
             niri.clone(),
             config,
         )
