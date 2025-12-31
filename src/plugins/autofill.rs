@@ -72,8 +72,23 @@ impl AutofillPlugin {
     }
 
     /// Align columns in current workspace by focusing first column then last column
-    async fn check_and_align_last_column(_niri: &NiriIpc) -> Result<()> {
+    async fn check_and_align_last_column(niri: &NiriIpc) -> Result<()> {
         info!("Aligning columns in current workspace");
+
+        // Save the currently focused window before alignment
+        let niri_clone = niri.clone();
+        let focused_window_id =
+            tokio::task::spawn_blocking(move || niri_clone.get_focused_window_id())
+                .await
+                .context("Task join error")?
+                .ok()
+                .flatten();
+
+        if let Some(window_id) = focused_window_id {
+            debug!("Saving focused window ID: {}", window_id);
+        } else {
+            debug!("No focused window to save");
+        }
 
         // First, focus column first
         let focus_first_result = tokio::task::spawn_blocking(move || {
@@ -111,6 +126,33 @@ impl AutofillPlugin {
         if let Err(e) = focus_last_result {
             warn!("Failed to focus column last: {}", e);
             return Err(e);
+        }
+
+        // Restore focus to the previously focused window if it existed
+        if let Some(window_id) = focused_window_id {
+            debug!("Restoring focus to window ID: {}", window_id);
+            let restore_focus_result = tokio::task::spawn_blocking(move || {
+                let mut socket = niri_ipc::socket::Socket::connect()
+                    .context("Failed to connect to niri socket")?;
+                let action = Action::FocusWindow { id: window_id };
+                let request = Request::Action(action);
+                match socket.send(request)? {
+                    Reply::Ok(_) => Ok(()),
+                    Reply::Err(err) => Err(anyhow::anyhow!(
+                        "Failed to restore focus to window: {}",
+                        err
+                    )),
+                }
+            })
+            .await
+            .context("Task join error")?;
+
+            if let Err(e) = restore_focus_result {
+                warn!("Failed to restore focus to window: {}", e);
+                // Don't return error, alignment was successful
+            } else {
+                debug!("Focus restored successfully");
+            }
         }
 
         info!("Columns aligned successfully");
