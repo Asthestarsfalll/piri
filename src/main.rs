@@ -11,7 +11,6 @@ mod daemon;
 mod ipc;
 mod niri;
 mod plugins;
-mod scratchpads;
 
 use commands::CommandHandler;
 use config::Config;

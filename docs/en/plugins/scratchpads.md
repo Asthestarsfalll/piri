@@ -100,7 +100,7 @@ Dynamically added scratchpads will use the default size and margin set in the `[
      - Transfers focus to the scratchpad window
      - **Cross-workspace and cross-monitor support**: Regardless of which workspace or monitor the scratchpad window was originally on, it will automatically move to the currently focused location
    - **Hide**: 
-     - Moves the window off-screen
+     - Directly moves the window off-screen (no need to focus the scratchpad first)
      - Restores focus:
        - If the previously focused window is in the current workspace, focus it
        - If not in the current workspace, and there are other windows in the current workspace, focus the middle window

@@ -100,7 +100,7 @@ piri scratchpads mypad add fromRight
      - 将焦点转移到 scratchpad 窗口
      - **支持跨 workspace 和 monitor**: 无论 scratchpad 窗口原本在哪个工作区或显示器上，都会自动移动到当前聚焦的位置
    - **隐藏**: 
-     - 将窗口移动到屏幕外
+     - 直接将窗口移动到屏幕外（无需先聚焦 scratchpad）
      - 恢复焦点：
        - 如果之前聚焦的窗口在当前工作区，则聚焦到它
        - 如果不在当前工作区，且当前工作区存在其他窗口，则聚焦到最中间的窗口
