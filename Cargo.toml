@@ -21,4 +21,5 @@ shellexpand = "3.1"
 libc = "0.2"
 niri-ipc = "25.11"
 async-trait = "0.1"
+regex = "1.10"
 

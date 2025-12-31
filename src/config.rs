@@ -15,6 +15,8 @@ pub struct Config {
     pub scratchpads: HashMap<String, ScratchpadConfig>,
     #[serde(flatten)]
     pub empty: HashMap<String, EmptyWorkspaceConfig>,
+    #[serde(default)]
+    pub window_rule: Vec<WindowRuleConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +56,9 @@ pub struct PluginsConfig {
     /// Enable/disable empty plugin (default: true if empty workspace rules are configured)
     #[serde(default)]
     pub empty: Option<bool>,
+    /// Enable/disable window_rule plugin (default: true if window rules are configured)
+    #[serde(default)]
+    pub window_rule: Option<bool>,
     /// Empty plugin configuration (for backward compatibility)
     #[serde(rename = "empty_config", default)]
     pub empty_config: Option<EmptyPluginConfig>,
@@ -64,6 +69,7 @@ impl Default for PluginsConfig {
         Self {
             scratchpads: None,
             empty: None,
+            window_rule: None,
             empty_config: None,
         }
     }
@@ -73,6 +79,30 @@ impl Default for PluginsConfig {
 pub struct EmptyWorkspaceConfig {
     /// Command to execute when switching to this empty workspace
     pub command: String,
+}
+
+/// Window rule configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowRuleConfig {
+    /// Regex pattern to match app_id (optional)
+    pub app_id: Option<String>,
+    /// Regex pattern to match title (optional)
+    pub title: Option<String>,
+    /// Workspace to move matching windows to (name or idx)
+    pub open_on_workspace: String,
+}
+
+/// Window rule plugin config (for internal use)
+#[derive(Debug, Clone)]
+pub struct WindowRulePluginConfig {
+    /// List of window rules
+    pub rules: Vec<WindowRuleConfig>,
+}
+
+impl Default for WindowRulePluginConfig {
+    fn default() -> Self {
+        Self { rules: Vec::new() }
+    }
 }
 
 /// Empty plugin config (for backward compatibility and internal use)
@@ -186,6 +216,7 @@ impl Config {
             piri: PiriConfig::default(),
             scratchpads: HashMap::new(),
             empty: HashMap::new(),
+            window_rule: Vec::new(),
         };
 
         // Extract niri config
@@ -248,6 +279,11 @@ impl Config {
                                 }
                             }
                         }
+                        if let Some(window_rule_enabled) = plugins_map.get("window_rule") {
+                            if let Some(enabled) = window_rule_enabled.as_bool() {
+                                config.piri.plugins.window_rule = Some(enabled);
+                            }
+                        }
                     }
                 }
             }
@@ -302,6 +338,67 @@ impl Config {
             }
         }
 
+        // Extract window_rule config (format: [[window_rule]])
+        // In TOML, [[window_rule]] creates an array of tables
+        if let Some(window_rule_array) = doc.get("window_rule") {
+            if let Some(window_rule_items) = window_rule_array.as_array() {
+                for item in window_rule_items {
+                    if let Some(rule_table) = item.as_table() {
+                        let mut rule = WindowRuleConfig {
+                            app_id: None,
+                            title: None,
+                            open_on_workspace: String::new(),
+                        };
+
+                        if let Some(app_id_value) = rule_table.get("app_id") {
+                            if let Some(app_id_str) = app_id_value.as_str() {
+                                rule.app_id = Some(app_id_str.to_string());
+                            }
+                        }
+
+                        if let Some(title_value) = rule_table.get("title") {
+                            if let Some(title_str) = title_value.as_str() {
+                                rule.title = Some(title_str.to_string());
+                            }
+                        }
+
+                        if let Some(workspace_value) = rule_table.get("open_on_workspace") {
+                            if let Some(workspace_str) = workspace_value.as_str() {
+                                rule.open_on_workspace = workspace_str.to_string();
+                            } else {
+                                warn!("window_rule: open_on_workspace must be a string");
+                                continue;
+                            }
+                        } else {
+                            warn!("window_rule: missing required field 'open_on_workspace'");
+                            continue;
+                        }
+
+                        // At least one of app_id or title must be specified
+                        if rule.app_id.is_none() && rule.title.is_none() {
+                            warn!("window_rule: at least one of 'app_id' or 'title' must be specified");
+                            continue;
+                        }
+
+                        let app_id_clone = rule.app_id.clone();
+                        let title_clone = rule.title.clone();
+                        let workspace_clone = rule.open_on_workspace.clone();
+                        config.window_rule.push(rule);
+                        log::debug!(
+                            "Parsed window rule: app_id={:?}, title={:?}, workspace={}",
+                            app_id_clone,
+                            title_clone,
+                            workspace_clone
+                        );
+                    }
+                }
+                log::info!(
+                    "Parsed {} window rule configurations",
+                    config.window_rule.len()
+                );
+            }
+        }
+
         Ok(config)
     }
 
@@ -317,6 +414,7 @@ impl Default for Config {
             piri: PiriConfig::default(),
             scratchpads: HashMap::new(),
             empty: HashMap::new(),
+            window_rule: Vec::new(),
         }
     }
 }
@@ -362,6 +460,23 @@ impl Config {
         // If explicitly set, use that value
         // Otherwise, default to false (disabled)
         self.piri.plugins.empty.unwrap_or(false)
+    }
+
+    /// Get window rule plugin config
+    pub fn get_window_rule_plugin_config(&self) -> Option<WindowRulePluginConfig> {
+        if !self.window_rule.is_empty() {
+            return Some(WindowRulePluginConfig {
+                rules: self.window_rule.clone(),
+            });
+        }
+        None
+    }
+
+    /// Check if window_rule plugin should be enabled
+    pub fn is_window_rule_enabled(&self) -> bool {
+        // If explicitly set, use that value
+        // Otherwise, default to true if rules are configured
+        self.piri.plugins.window_rule.unwrap_or(!self.window_rule.is_empty())
     }
 }
 

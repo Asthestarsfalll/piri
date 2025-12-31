@@ -134,7 +134,7 @@ impl NiriIpc {
     }
 
     /// Helper function to get workspaces for mapping
-    fn get_workspaces_for_mapping(&self) -> Result<Vec<niri_ipc::Workspace>> {
+    pub fn get_workspaces_for_mapping(&self) -> Result<Vec<niri_ipc::Workspace>> {
         let mut socket = self.connect()?;
         let request = Request::Workspaces;
         match socket.send(request)? {
@@ -371,6 +371,41 @@ impl NiriIpc {
         let request = Request::Action(action);
         match socket.send(request)? {
             Reply::Ok(_) => Ok(()),
+            Reply::Err(err) => {
+                anyhow::bail!("Failed to move window to workspace: {}", err);
+            }
+        }
+    }
+
+    /// Move window to a specific workspace by identifier (name or idx)
+    pub fn move_window_to_workspace(&self, window_id: u64, workspace: &str) -> Result<()> {
+        log::info!("Moving window {} to workspace {}", window_id, workspace);
+        let mut socket = self.connect()?;
+
+        // Parse workspace reference - try as index first, then as name
+        let workspace_ref = if let Ok(idx) = workspace.parse::<u8>() {
+            WorkspaceReferenceArg::Index(idx)
+        } else if let Ok(id) = workspace.parse::<u64>() {
+            WorkspaceReferenceArg::Id(id)
+        } else {
+            WorkspaceReferenceArg::Name(workspace.to_string())
+        };
+
+        let action = Action::MoveWindowToWorkspace {
+            window_id: Some(window_id),
+            reference: workspace_ref,
+            focus: false, // Don't change focus, just move the window
+        };
+        let request = Request::Action(action);
+        match socket.send(request)? {
+            Reply::Ok(_) => {
+                log::debug!(
+                    "Successfully moved window {} to workspace {}",
+                    window_id,
+                    workspace
+                );
+                Ok(())
+            }
             Reply::Err(err) => {
                 anyhow::bail!("Failed to move window to workspace: {}", err);
             }

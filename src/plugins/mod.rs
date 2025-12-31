@@ -1,5 +1,6 @@
 pub mod empty;
 pub mod scratchpads;
+pub mod window_rule;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -55,52 +56,73 @@ impl PluginManager {
         }
     }
 
+    /// Helper function to initialize or update a plugin
+    async fn init_plugin<P, F>(
+        &mut self,
+        plugin_name: &str,
+        enabled: bool,
+        create_plugin: F,
+        niri: NiriIpc,
+        config: &Config,
+    ) -> Result<()>
+    where
+        P: Plugin + 'static,
+        F: FnOnce() -> P,
+    {
+        if enabled {
+            if let Some(plugin) = self.plugins.iter_mut().find(|p| p.name() == plugin_name) {
+                // Plugin exists, update config
+                info!("Updating {} plugin configuration", plugin_name);
+                plugin.update_config(niri.clone(), config).await?;
+            } else {
+                // Plugin doesn't exist, create new one
+                let mut new_plugin = create_plugin();
+                new_plugin.init(niri.clone(), config).await?;
+                self.plugins.push(Box::new(new_plugin));
+                log::info!("{} plugin enabled", plugin_name);
+            }
+        } else {
+            // Remove plugin if it exists and is disabled
+            let had_plugin = self.plugins.iter().any(|p| p.name() == plugin_name);
+            self.plugins.retain(|p| p.name() != plugin_name);
+            if had_plugin {
+                log::debug!("{} plugin disabled by configuration", plugin_name);
+            }
+        }
+        Ok(())
+    }
+
     /// Initialize all plugins
     pub async fn init(&mut self, niri: NiriIpc, config: &Config) -> Result<()> {
-        // Check if plugins already exist (for config reload)
-        let has_plugins = !self.plugins.is_empty();
-
         // Initialize or update scratchpads plugin
-        if config.is_scratchpads_enabled() {
-            if let Some(plugin) = self.plugins.iter_mut().find(|p| p.name() == "scratchpads") {
-                // Plugin exists, update config
-                info!("Updating scratchpads plugin configuration");
-                plugin.update_config(niri.clone(), config).await?;
-            } else {
-                // Plugin doesn't exist, create new one
-                let mut scratchpads_plugin = scratchpads::ScratchpadsPlugin::new();
-                scratchpads_plugin.init(niri.clone(), config).await?;
-                self.plugins.push(Box::new(scratchpads_plugin));
-                log::info!("Scratchpads plugin enabled");
-            }
-        } else {
-            // Remove plugin if it exists and is disabled
-            if has_plugins {
-                self.plugins.retain(|p| p.name() != "scratchpads");
-            }
-            log::debug!("Scratchpads plugin disabled by configuration");
-        }
+        self.init_plugin(
+            "scratchpads",
+            config.is_scratchpads_enabled(),
+            || scratchpads::ScratchpadsPlugin::new(),
+            niri.clone(),
+            config,
+        )
+        .await?;
 
         // Initialize or update empty plugin
-        if config.is_empty_enabled() {
-            if let Some(plugin) = self.plugins.iter_mut().find(|p| p.name() == "empty") {
-                // Plugin exists, update config
-                info!("Updating empty plugin configuration");
-                plugin.update_config(niri.clone(), config).await?;
-            } else {
-                // Plugin doesn't exist, create new one
-                let mut empty_plugin = empty::EmptyPlugin::new();
-                empty_plugin.init(niri.clone(), config).await?;
-                self.plugins.push(Box::new(empty_plugin));
-                log::info!("Empty plugin enabled");
-            }
-        } else {
-            // Remove plugin if it exists and is disabled
-            if has_plugins {
-                self.plugins.retain(|p| p.name() != "empty");
-            }
-            log::debug!("Empty plugin disabled by configuration");
-        }
+        self.init_plugin(
+            "empty",
+            config.is_empty_enabled(),
+            || empty::EmptyPlugin::new(),
+            niri.clone(),
+            config,
+        )
+        .await?;
+
+        // Initialize or update window_rule plugin
+        self.init_plugin(
+            "window_rule",
+            config.is_window_rule_enabled(),
+            || window_rule::WindowRulePlugin::new(),
+            niri.clone(),
+            config,
+        )
+        .await?;
 
         Ok(())
     }

@@ -18,6 +18,7 @@
 
 - 📦 **Scratchpads**: 强大的窗口管理功能，支持快速访问常用应用程序（详见 [Scratchpads 文档](docs/zh/plugins/scratchpads.md)）
 - 🔌 **Empty**: 在切换到空 workspace 时自动执行命令，用于自动化工作流程（详见 [Empty 文档](docs/zh/plugins/empty.md)）
+- 🎯 **Window Rule**: 根据窗口的 `app_id` 或 `title` 自动将窗口移动到指定 workspace（详见 [Window Rule 文档](docs/zh/plugins/window_rule.md)）
 
 ## 快速开始
 
@@ -159,6 +160,41 @@ command = "firefox"
 **Workspace 标识符**：支持使用 workspace 名称（如 `"main"`）或索引（如 `"1"`）来匹配。
 
 详细说明请参考 [插件系统文档](docs/zh/plugins/empty.md)。
+
+### Window Rule
+
+对 niri window Rule 的增强，目前支持
+- 根据 workspace idx 打开窗口，而不仅根据 name
+
+**配置示例**：
+```toml
+[piri.plugins]
+window_rule = true
+
+# 根据 app_id 匹配
+[[window_rule]]
+app_id = "ghostty"
+open_on_workspace = "1"
+
+# 根据 title 匹配
+[[window_rule]]
+title = ".*Chrome.*"
+open_on_workspace = "browser"
+
+# 同时指定 app_id 和 title（任一匹配即可）
+[[window_rule]]
+app_id = "code"
+title = ".*VS Code.*"
+open_on_workspace = "dev"
+```
+
+**特性**：
+- 支持正则表达式匹配
+- 支持按 `app_id` 或 `title` 匹配，或两者组合（OR 逻辑）
+- 支持 workspace 名称或索引匹配
+- 纯事件驱动，实时响应窗口创建
+
+详细说明请参考 [Window Rule 文档](docs/zh/plugins/window_rule.md)。
 
 ## 文档
 

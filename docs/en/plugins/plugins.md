@@ -10,11 +10,13 @@ You can control which plugins are enabled or disabled in the configuration file:
 [piri.plugins]
 scratchpads = true
 empty = true
+window_rule = true
 ```
 
 **Default Behavior**:
 - If not explicitly specified, plugins are **disabled** by default (`false`)
-- You must explicitly set `scratchpads = true` or `empty = true` to enable plugins
+- You must explicitly set `scratchpads = true`, `empty = true`, or `window_rule = true` to enable plugins
+- Exception: `window_rule` plugin is enabled by default if window rules are configured (unless explicitly set to `false`)
 
 ## Empty Plugin
 
@@ -87,5 +89,40 @@ command = "emacs"
 
 ## Scratchpads Plugin
 
-The Scratchpads feature is implemented through the plugin system. For detailed documentation, please refer to the [Scratchpads documentation](scratchpads.en.md).
+The Scratchpads feature is implemented through the plugin system. For detailed documentation, please refer to the [Scratchpads documentation](scratchpads.md).
+
+## Window Rule Plugin
+
+The Window Rule plugin automatically moves windows to specified workspaces based on their `app_id` or `title`. This is very useful for automating window management.
+
+### Configuration
+
+Use the `[[window_rule]]` format in the configuration file to configure window rules:
+
+```toml
+# Match by app_id
+[[window_rule]]
+app_id = "ghostty"
+open_on_workspace = "1"
+
+# Match by title
+[[window_rule]]
+title = "^kitty"
+open_on_workspace = "browser"
+
+# Specify both app_id and title (either match works)
+[[window_rule]]
+app_id = "code"
+title = ".*VS Code.*"
+open_on_workspace = "dev"
+```
+
+### Features
+
+- ✅ **Pure Event-Driven**: Uses niri event stream for real-time listening, automatically handles windows when created
+- ✅ **Regular Expression Support**: Supports powerful regular expression pattern matching
+- ✅ **Flexible Matching**: Supports matching by `app_id` or `title`, or both combined (OR logic)
+- ✅ **Workspace Matching**: Supports both name and idx identifier types, matching order is name first, then idx
+
+For detailed documentation, please refer to the [Window Rule documentation](window_rule.md).
 

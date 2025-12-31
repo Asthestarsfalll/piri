@@ -18,6 +18,7 @@ Contributions, suggestions, bug reports and comments are welcome.
 
 - 📦 **Scratchpads**: Powerful window management feature for quick access to frequently used applications (see [Scratchpads documentation](docs/en/plugins/scratchpads.md) for details)
 - 🔌 **Empty**: Automatically execute commands when switching to empty workspaces, useful for automating workflows (see [Empty documentation](docs/en/plugins/empty.md) for details)
+- 🎯 **Window Rule**: Automatically move windows to specified workspaces based on `app_id` or `title` (see [Window Rule documentation](docs/en/plugins/window_rule.md) for details)
 
 ## Quick Start
 
@@ -159,6 +160,41 @@ command = "firefox"
 **Workspace Identifiers**: Supports matching by workspace name (e.g., `"main"`) or index (e.g., `"1"`).
 
 For detailed documentation, please refer to [Plugin System documentation](docs/en/plugins/empty.md).
+
+### Window Rule
+
+An enhancement to niri window rules, currently supports:
+- Opening windows based on workspace idx, not just by name
+
+**Configuration Example**:
+```toml
+[piri.plugins]
+window_rule = true
+
+# Match by app_id
+[[window_rule]]
+app_id = "ghostty"
+open_on_workspace = "1"
+
+# Match by title
+[[window_rule]]
+title = ".*Chrome.*"
+open_on_workspace = "browser"
+
+# Specify both app_id and title (either match works)
+[[window_rule]]
+app_id = "code"
+title = ".*VS Code.*"
+open_on_workspace = "dev"
+```
+
+**Features**:
+- Regular expression pattern matching support
+- Match by `app_id` or `title`, or both combined (OR logic)
+- Support workspace name or index matching
+- Pure event-driven, real-time response to window creation
+
+For detailed documentation, please refer to the [Window Rule documentation](docs/en/plugins/window_rule.md).
 
 ## Documentation
 

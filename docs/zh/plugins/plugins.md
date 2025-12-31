@@ -10,11 +10,13 @@ Piri 支持插件系统，允许你扩展功能。插件在守护进程模式下
 [piri.plugins]
 scratchpads = true
 empty = true
+window_rule = true
 ```
 
 **默认行为**：
 - 如果未明确指定，插件默认**禁用**（`false`）
-- 必须显式设置 `scratchpads = true` 或 `empty = true` 来启用插件
+- 必须显式设置 `scratchpads = true`、`empty = true` 或 `window_rule = true` 来启用插件
+- `window_rule` 插件例外：如果配置了窗口规则，默认启用（除非显式设置为 `false`）
 
 ## Empty 插件
 
@@ -88,4 +90,39 @@ command = "emacs"
 ## Scratchpads 插件
 
 Scratchpads 功能通过插件系统实现。详细说明请参考 [Scratchpads 文档](scratchpads.md)。
+
+## Window Rule 插件
+
+Window Rule 插件用于根据窗口的 `app_id` 或 `title` 自动将窗口移动到指定的 workspace。这对于自动化窗口管理非常有用。
+
+### 配置
+
+在配置文件中使用 `[[window_rule]]` 格式配置窗口规则：
+
+```toml
+# 根据 app_id 匹配
+[[window_rule]]
+app_id = "ghostty"
+open_on_workspace = "1"
+
+# 根据 title 匹配
+[[window_rule]]
+title = "^kitty"
+open_on_workspace = "browser"
+
+# 同时指定 app_id 和 title（任一匹配即可）
+[[window_rule]]
+app_id = "code"
+title = ".*VS Code.*"
+open_on_workspace = "dev"
+```
+
+### 特性
+
+- ✅ **纯事件驱动**: 使用 niri 事件流实时监听，窗口创建时自动处理
+- ✅ **正则表达式支持**: 支持强大的正则表达式模式匹配
+- ✅ **灵活匹配**: 支持按 `app_id` 或 `title` 匹配，或两者组合（OR 逻辑）
+- ✅ **Workspace 匹配**: 支持 name 和 idx 两种标识符类型，匹配顺序为 name 优先，然后 idx
+
+详细说明请参考 [Window Rule 文档](window_rule.md)。
 
