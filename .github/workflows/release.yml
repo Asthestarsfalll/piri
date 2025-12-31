@@ -77,9 +77,33 @@ jobs:
           fi
 
       - name: Create archive
+        working-directory: ${{ github.workspace }}
         run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ../../../../${{ matrix.artifact_name }}.tar.gz piri
+          BINARY_PATH="target/${{ matrix.target }}/release/piri"
+          ARCHIVE_NAME="${{ matrix.artifact_name }}.tar.gz"
+
+          # 检查二进制文件是否存在
+          if [ ! -f "$BINARY_PATH" ]; then
+            echo "错误: 二进制文件不存在: $BINARY_PATH"
+            ls -la "target/${{ matrix.target }}/release/" || true
+            exit 1
+          fi
+
+          # 创建归档（在项目根目录）
+          tar czf "$ARCHIVE_NAME" -C "target/${{ matrix.target }}/release" piri
+
+          # 验证归档是否创建成功
+          if [ ! -f "$ARCHIVE_NAME" ]; then
+            echo "错误: 归档文件创建失败: $ARCHIVE_NAME"
+            echo "当前工作目录: $(pwd)"
+            echo "文件列表:"
+            ls -la || true
+            exit 1
+          fi
+
+          # 显示归档信息
+          ls -lh "$ARCHIVE_NAME"
+          echo "归档文件已创建: $ARCHIVE_NAME"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
