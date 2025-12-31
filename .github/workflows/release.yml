@@ -25,19 +25,6 @@ jobs:
             os: ubuntu-22.04
             artifact_name: piri-aarch64-unknown-linux-gnu
             strip: true
-          - target: x86_64-apple-darwin
-            os: macos-14
-            artifact_name: piri-x86_64-apple-darwin
-            strip: false
-          - target: aarch64-apple-darwin
-            os: macos-14
-            artifact_name: piri-aarch64-apple-darwin
-            strip: false
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            artifact_name: piri-x86_64-pc-windows-msvc
-            strip: false
-            ext: .exe
 
     steps:
       - name: Checkout repository
@@ -61,14 +48,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-${{ matrix.target }}-
 
-      - name: Install cross-compilation dependencies (Linux)
-        if: matrix.os == 'ubuntu-22.04'
+      - name: Install cross-compilation dependencies
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
           sudo apt-get install -y libc6-dev-arm64-cross
+          sudo apt-get install -y binutils-aarch64-linux-gnu
 
-      - name: Set up cross-compilation (Linux aarch64)
+      - name: Set up cross-compilation
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
@@ -79,28 +67,25 @@ jobs:
         run: |
           cargo build --release --target ${{ matrix.target }}
 
-      - name: Strip binary (Linux)
+      - name: Strip binary
         if: matrix.strip
         run: |
-          strip target/${{ matrix.target }}/release/piri${{ matrix.ext || '' }}
+          if [ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]; then
+            aarch64-linux-gnu-strip target/${{ matrix.target }}/release/piri
+          else
+            strip target/${{ matrix.target }}/release/piri
+          fi
 
-      - name: Create archive (Linux/macOS)
-        if: matrix.os != 'windows-latest'
+      - name: Create archive
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../../../${{ matrix.artifact_name }}.tar.gz piri${{ matrix.ext || '' }}
-
-      - name: Create archive (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          Compress-Archive -Path "target\${{ matrix.target }}\release\piri${{ matrix.ext || '' }}" -DestinationPath "${{ matrix.artifact_name }}.zip"
-        shell: pwsh
+          tar czf ../../../../${{ matrix.artifact_name }}.tar.gz piri
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.artifact_name }}.${{ matrix.os == 'windows-latest' && 'zip' || 'tar.gz' }}
+          path: ${{ matrix.artifact_name }}.tar.gz
           retention-days: 30
 
   release:
@@ -127,7 +112,7 @@ jobs:
       - name: Create checksums
         run: |
           cd artifacts
-          find . -type f \( -name "*.tar.gz" -o -name "*.zip" \) | while read file; do
+          find . -type f -name "*.tar.gz" | while read file; do
             sha256sum "$file" > "$file.sha256"
           done
 
@@ -138,7 +123,6 @@ jobs:
           name: Release ${{ steps.tag.outputs.TAG_NAME }}
           files: |
             artifacts/**/*.tar.gz
-            artifacts/**/*.zip
             artifacts/**/*.sha256
           generate_release_notes: true
           draft: false
