@@ -2,6 +2,7 @@ pub mod autofill;
 pub mod empty;
 pub mod scratchpads;
 pub mod singleton;
+pub mod window_order;
 pub mod window_rule;
 pub mod window_utils;
 
@@ -231,6 +232,16 @@ impl PluginManager {
             "singleton",
             config.is_singleton_enabled(),
             || singleton::SingletonPlugin::new(),
+            niri.clone(),
+            config,
+        )
+        .await?;
+
+        // Initialize or update window_order plugin
+        self.init_plugin(
+            "window_order",
+            config.is_window_order_enabled(),
+            || window_order::WindowOrderPlugin::new(),
             niri.clone(),
             config,
         )

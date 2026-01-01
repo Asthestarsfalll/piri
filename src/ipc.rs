@@ -10,6 +10,7 @@ pub enum IpcRequest {
     ScratchpadToggle { name: String },
     ScratchpadAdd { name: String, direction: String },
     SingletonToggle { name: String },
+    WindowOrderToggle,
     Reload,
     Ping,
     Shutdown,
@@ -264,13 +265,22 @@ pub async fn handle_request(
                         IpcResponse::Error("Scratchpads plugin is not enabled. Please enable it in the configuration file (piri.plugins.scratchpads = true).".to_string())
                     }
                 }
-                IpcRequest::SingletonToggle { name } => {
+                IpcRequest::SingletonToggle { name: _ } => {
                     // Check if singleton plugin should be enabled but isn't
                     let config = handler.config();
                     if config.is_singleton_enabled() {
                         IpcResponse::Error(format!("Singleton plugin is enabled but not initialized. Please restart the daemon."))
                     } else {
                         IpcResponse::Error(format!("Singleton plugin is not enabled. Please enable it in the configuration file (piri.plugins.singleton = true)."))
+                    }
+                }
+                IpcRequest::WindowOrderToggle => {
+                    // Check if window_order plugin should be enabled but isn't
+                    let config = handler.config();
+                    if config.is_window_order_enabled() {
+                        IpcResponse::Error("WindowOrder plugin is enabled but not initialized. Please restart the daemon.".to_string())
+                    } else {
+                        IpcResponse::Error("WindowOrder plugin is not enabled. Please enable it in the configuration file (piri.plugins.window_order = true).".to_string())
                     }
                 }
             }

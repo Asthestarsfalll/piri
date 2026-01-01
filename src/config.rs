@@ -19,6 +19,10 @@ pub struct Config {
     pub singleton: HashMap<String, SingletonConfig>,
     #[serde(default)]
     pub window_rule: Vec<WindowRuleConfig>,
+    #[serde(flatten)]
+    pub window_order: HashMap<String, u32>,
+    #[serde(default)]
+    pub window_order_config: WindowOrderConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +71,9 @@ pub struct PluginsConfig {
     /// Enable/disable singleton plugin (default: true if singleton configs are configured)
     #[serde(default)]
     pub singleton: Option<bool>,
+    /// Enable/disable window_order plugin (default: true if window_order configs are configured)
+    #[serde(default)]
+    pub window_order: Option<bool>,
     /// Empty plugin configuration (for backward compatibility)
     #[serde(rename = "empty_config", default)]
     pub empty_config: Option<EmptyPluginConfig>,
@@ -80,6 +87,7 @@ impl Default for PluginsConfig {
             window_rule: None,
             autofill: None,
             singleton: None,
+            window_order: None,
             empty_config: None,
         }
     }
@@ -236,6 +244,8 @@ impl Config {
             empty: HashMap::new(),
             singleton: HashMap::new(),
             window_rule: Vec::new(),
+            window_order: HashMap::new(),
+            window_order_config: WindowOrderConfig::default(),
         };
 
         // Extract niri config
@@ -311,6 +321,41 @@ impl Config {
                         if let Some(singleton_enabled) = plugins_map.get("singleton") {
                             if let Some(enabled) = singleton_enabled.as_bool() {
                                 config.piri.plugins.singleton = Some(enabled);
+                            }
+                        }
+                        if let Some(window_order_enabled) = plugins_map.get("window_order") {
+                            if let Some(enabled) = window_order_enabled.as_bool() {
+                                config.piri.plugins.window_order = Some(enabled);
+                            }
+                        }
+                    }
+                }
+
+                // Extract piri.window_order config
+                if let Some(piri_window_order_table) = piri_map.get("window_order") {
+                    if let Some(piri_window_order_map) = piri_window_order_table.as_table() {
+                        if let Some(enable_listener) =
+                            piri_window_order_map.get("enable_event_listener")
+                        {
+                            if let Some(enabled) = enable_listener.as_bool() {
+                                config.window_order_config.enable_event_listener = enabled;
+                            }
+                        }
+                        if let Some(default_w) = piri_window_order_map.get("default_weight") {
+                            if let Some(weight) = default_w.as_integer() {
+                                config.window_order_config.default_weight = weight as u32;
+                            }
+                        }
+                        if let Some(workspaces) = piri_window_order_map.get("workspaces") {
+                            if let Some(workspaces_array) = workspaces.as_array() {
+                                config.window_order_config.workspaces = workspaces_array
+                                    .iter()
+                                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                    .collect();
+                                log::debug!(
+                                    "piri.window_order.workspaces = {:?}",
+                                    config.window_order_config.workspaces
+                                );
                             }
                         }
                     }
@@ -472,6 +517,68 @@ impl Config {
             }
         }
 
+        // Extract window_order config (format: [window_order])
+        // In TOML, [window_order] creates a table: { "window_order": { "app_id": value, ... } }
+        // Special keys: enable_event_listener (bool), default_weight (integer)
+        if let Some(window_order_table) = doc.get("window_order") {
+            if let Some(window_order_map) = window_order_table.as_table() {
+                for (key, value) in window_order_map.iter() {
+                    // Handle special configuration keys
+                    if key == "enable_event_listener" {
+                        if let Some(enabled) = value.as_bool() {
+                            config.window_order_config.enable_event_listener = enabled;
+                            log::debug!("window_order.enable_event_listener = {}", enabled);
+                        } else {
+                            warn!("window_order.enable_event_listener must be a boolean");
+                        }
+                        continue;
+                    }
+                    if key == "default_weight" {
+                        if let Some(weight) = value.as_integer() {
+                            config.window_order_config.default_weight = weight as u32;
+                            log::debug!("window_order.default_weight = {}", weight);
+                        } else {
+                            warn!("window_order.default_weight must be an integer");
+                        }
+                        continue;
+                    }
+                    if key == "workspaces" {
+                        if let Some(workspaces_array) = value.as_array() {
+                            config.window_order_config.workspaces = workspaces_array
+                                .iter()
+                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                .collect();
+                            log::debug!(
+                                "window_order.workspaces = {:?}",
+                                config.window_order_config.workspaces
+                            );
+                        } else {
+                            warn!("window_order.workspaces must be an array of strings");
+                        }
+                        continue;
+                    }
+                    // Handle app_id -> weight mappings
+                    if let Some(order_value) = value.as_integer() {
+                        config.window_order.insert(key.clone(), order_value as u32);
+                        log::debug!("Parsed window_order config: {} -> {}", key, order_value);
+                    } else {
+                        warn!("window_order.{}: value must be an integer", key);
+                    }
+                }
+                log::info!(
+                    "Parsed {} window_order configurations (event_listener: {}, default_weight: {}, workspaces: {:?})",
+                    config.window_order.len(),
+                    config.window_order_config.enable_event_listener,
+                    config.window_order_config.default_weight,
+                    if config.window_order_config.workspaces.is_empty() {
+                        "all".to_string()
+                    } else {
+                        format!("{:?}", config.window_order_config.workspaces)
+                    }
+                );
+            }
+        }
+
         Ok(config)
     }
 
@@ -489,6 +596,8 @@ impl Default for Config {
             empty: HashMap::new(),
             singleton: HashMap::new(),
             window_rule: Vec::new(),
+            window_order: HashMap::new(),
+            window_order_config: WindowOrderConfig::default(),
         }
     }
 }
@@ -570,6 +679,93 @@ impl Config {
         // If explicitly set, use that value
         // Otherwise, default to true if singleton configs are configured
         self.piri.plugins.singleton.unwrap_or(!self.singleton.is_empty())
+    }
+
+    /// Get window order value for an app_id
+    /// Returns configured value if exists, otherwise returns default_weight from config
+    /// Supports partial matching: if exact match fails, tries to match if config key is contained in app_id
+    pub fn get_window_order(&self, app_id: &str) -> u32 {
+        // First try exact match
+        if let Some(&order) = self.window_order.get(app_id) {
+            return order;
+        }
+
+        // Then try partial match: check if any config key is contained in app_id
+        // or if app_id is contained in any config key
+        // This allows "ghostty" to match "com.mitchellh.ghostty"
+        for (config_key, &order) in &self.window_order {
+            // Check if config key is contained in app_id (e.g., "ghostty" in "com.mitchellh.ghostty")
+            if app_id.contains(config_key) {
+                log::debug!(
+                    "Matched window_order: app_id '{}' contains config key '{}' -> order {}",
+                    app_id,
+                    config_key,
+                    order
+                );
+                return order;
+            }
+            // Also check if app_id is contained in config key (e.g., "google-chrome" in "google-chrome-stable")
+            if config_key.contains(app_id) {
+                log::debug!(
+                    "Matched window_order: config key '{}' contains app_id '{}' -> order {}",
+                    config_key,
+                    app_id,
+                    order
+                );
+                return order;
+            }
+        }
+
+        // No match found, return default weight
+        self.window_order_config.default_weight
+    }
+
+    /// Check if window_order plugin should be enabled
+    pub fn is_window_order_enabled(&self) -> bool {
+        // If explicitly set, use that value
+        // Otherwise, default to true if window_order configs are configured
+        self.piri.plugins.window_order.unwrap_or(!self.window_order.is_empty())
+    }
+
+    /// Check if window_order event listener is enabled
+    pub fn is_window_order_event_listener_enabled(&self) -> bool {
+        self.window_order_config.enable_event_listener
+    }
+}
+
+/// Window order plugin configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowOrderConfig {
+    /// Enable/disable event listener for automatic reordering
+    /// When enabled, windows will be automatically reordered on WindowLayoutsChanged and WindowClosed events
+    #[serde(default = "default_enable_event_listener")]
+    pub enable_event_listener: bool,
+    /// Default weight for windows not specified in window_order config
+    /// Windows with higher weight values will be positioned more to the left
+    #[serde(default = "default_window_order_weight")]
+    pub default_weight: u32,
+    /// Workspaces where window ordering should be applied
+    /// If empty or not specified, applies to all workspaces
+    /// Can be workspace names or indices (as strings)
+    #[serde(default)]
+    pub workspaces: Vec<String>,
+}
+
+fn default_enable_event_listener() -> bool {
+    false // Default: event listener disabled
+}
+
+fn default_window_order_weight() -> u32 {
+    0 // Default: unconfigured windows have weight 0 (rightmost)
+}
+
+impl Default for WindowOrderConfig {
+    fn default() -> Self {
+        Self {
+            enable_event_listener: default_enable_event_listener(),
+            default_weight: default_window_order_weight(),
+            workspaces: Vec::new(),
+        }
     }
 }
 

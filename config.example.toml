@@ -14,6 +14,7 @@ empty = true
 window_rule = true
 autofill = true
 singleton = true
+window_order = true
 
 [piri.scratchpad]
 default_size = "40% 60%"
@@ -72,3 +73,20 @@ command = 'google-chrome-stable'
 [singleton.term]
 command = 'GTK_IM_MODULE=wayland ghostty --class=singleton.term'
 app_id = 'singleton.term'
+
+# Window order: reorder windows in workspace based on app_id
+# Format: [piri.window_order] for plugin config, [window_order] for app_id weights
+# - enable_event_listener: enable automatic reordering on events (default: false)
+# - default_weight: default weight for windows not specified (default: 0)
+# - workspaces: list of workspace names/indices to apply ordering (default: all workspaces)
+# Use 'piri window_order toggle' to manually reorder windows in current workspace
+[piri.window_order]
+enable_event_listener = false
+default_weight = 0
+# workspaces = ["1", "2", "dev"]  # Optional: only apply to specific workspaces (empty = all)
+
+[window_order]
+# Window-specific weights
+google-chrome = 100
+code = 80
+ghostty = 70

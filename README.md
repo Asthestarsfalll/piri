@@ -21,6 +21,7 @@
 - 🎯 **Window Rule**: 根据窗口的 `app_id` 或 `title` 自动将窗口移动到指定 workspace（详见 [Window Rule 文档](docs/zh/plugins/window_rule.md)）
 - 🔄 **Autofill**: 在窗口关闭或布局改变时自动将最后一列窗口对齐到最右侧位置（详见 [Autofill 文档](docs/zh/plugins/autofill.md)）
 - 🔒 **Singleton**: 管理单例窗口，确保应用程序只有一个实例运行（详见 [Singleton 文档](docs/zh/plugins/singleton.md)）
+- 📋 **Window Order**: 根据配置的权重值自动重排工作区中的窗口顺序（详见 [Window Order 文档](docs/zh/plugins/window_order.md)）
 
 ## 快速开始
 
@@ -248,6 +249,45 @@ piri singleton {name} toggle
 - 自动聚焦现有窗口，避免重复实例
 
 详细说明请参考 [Singleton 文档](docs/zh/plugins/singleton.md)。
+
+### Window Order
+
+![Window Order - 手动触发](./assets/window_order.mp4)
+
+![Window Order - 事件监听自动触发](./assets/window_order_envent.mp4)
+
+根据配置的权重值自动重排工作区中的窗口顺序。权重值越大，窗口越靠左。
+
+**配置示例**：
+```toml
+[piri.plugins]
+window_order = true
+
+[piri.window_order]
+enable_event_listener = true  # 启用事件监听，自动重排
+default_weight = 0           # 未配置窗口的默认权重
+# workspaces = ["1", "2", "dev"]  # 可选：仅在指定工作区应用（空列表 = 所有工作区）
+
+[window_order]
+google-chrome = 100
+code = 80
+ghostty = 70
+```
+
+**快速使用**：
+```bash
+# 手动触发窗口重排（可在任意工作区执行）
+piri window_order toggle
+```
+
+**特性**：
+- 智能排序算法，最小化窗口移动次数
+- 支持手动触发和事件驱动自动触发
+- 支持工作区过滤（仅自动触发时生效）
+- 相同权重窗口保持相对顺序
+- 支持 `app_id` 部分匹配
+
+详细说明请参考 [Window Order 文档](docs/zh/plugins/window_order.md)。
 
 ## 文档
 

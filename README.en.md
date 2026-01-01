@@ -21,6 +21,8 @@ Contributions, suggestions, bug reports and comments are welcome.
 - 🎯 **Window Rule**: Automatically move windows to specified workspaces based on `app_id` or `title` (see [Window Rule documentation](docs/en/plugins/window_rule.md) for details)
 - 🔄 **Autofill**: Automatically aligns the last column of windows to the rightmost position when windows are closed (see [Autofill documentation](docs/en/plugins/autofill.md) for details)
 - 🔒 **Singleton**: Manages singleton windows, ensuring applications have only one instance running (see [Singleton documentation](docs/en/plugins/singleton.md) for details)
+- 📋 **Window Order**: Automatically reorder windows in workspace based on configured priority weights (see [Window Order documentation](docs/en/plugins/window_order.md) for details)
+
 
 ## Quick Start
 
@@ -248,6 +250,45 @@ piri singleton {name} toggle
 - Automatically focuses existing windows, prevents duplicate instances
 
 For detailed documentation, please refer to the [Singleton documentation](docs/en/plugins/singleton.md).
+
+### Window Order
+
+![Window Order - Manual Trigger](./assets/window_order.mp4)
+
+![Window Order - Event-Driven Automatic Trigger](./assets/window_order_envent.mp4)
+
+Automatically reorder windows in workspace based on configured priority weights. Larger weight values position windows further to the left.
+
+**Configuration Example**:
+```toml
+[piri.plugins]
+window_order = true
+
+[piri.window_order]
+enable_event_listener = true  # Enable event listening for automatic reordering
+default_weight = 0            # Default weight for unconfigured windows
+# workspaces = ["1", "2", "dev"]  # Optional: only apply to specific workspaces (empty = all)
+
+[window_order]
+google-chrome = 100
+code = 80
+ghostty = 70
+```
+
+**Quick Usage**:
+```bash
+# Manually trigger window reordering (works in any workspace)
+piri window_order toggle
+```
+
+**Features**:
+- Intelligent sorting algorithm that minimizes window moves
+- Supports manual trigger and event-driven automatic trigger
+- Supports workspace filtering (only for automatic trigger)
+- Preserves relative order for windows with same weight
+- Supports partial matching of `app_id`
+
+For detailed documentation, please refer to the [Window Order documentation](docs/en/plugins/window_order.md).
 
 ## Documentation
 

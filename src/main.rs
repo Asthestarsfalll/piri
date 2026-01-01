@@ -51,6 +51,12 @@ enum Commands {
         #[command(subcommand)]
         action: SingletonAction,
     },
+    /// Window order management
+    WindowOrder {
+        /// Action to perform
+        #[command(subcommand)]
+        action: WindowOrderAction,
+    },
     /// Reload configuration
     Reload,
     /// Stop the daemon
@@ -77,6 +83,12 @@ enum ScratchpadAction {
 #[derive(Subcommand)]
 enum SingletonAction {
     /// Toggle singleton (focus if exists, launch if not)
+    Toggle,
+}
+
+#[derive(Subcommand)]
+enum WindowOrderAction {
+    /// Toggle window order (reorder windows in current workspace)
     Toggle,
 }
 
@@ -240,6 +252,29 @@ async fn async_main() -> Result<()> {
                         }
                         IpcResponse::Error(e) => {
                             anyhow::bail!("Failed to toggle singleton: {}", e);
+                        }
+                        _ => {
+                            anyhow::bail!("Unexpected response from daemon");
+                        }
+                    }
+                }
+            }
+        }
+        Commands::WindowOrder { action } => {
+            // Send command to daemon via IPC
+            use crate::ipc::{IpcClient, IpcRequest, IpcResponse};
+
+            let client = IpcClient::new(None);
+
+            match action {
+                WindowOrderAction::Toggle => {
+                    let response = client.send_request(IpcRequest::WindowOrderToggle).await?;
+                    match response {
+                        IpcResponse::Success => {
+                            info!("Window order toggled");
+                        }
+                        IpcResponse::Error(e) => {
+                            anyhow::bail!("Failed to toggle window order: {}", e);
                         }
                         _ => {
                             anyhow::bail!("Unexpected response from daemon");
