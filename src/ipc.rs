@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 
@@ -11,7 +11,6 @@ pub enum IpcRequest {
     ScratchpadAdd { name: String, direction: String },
     SingletonToggle { name: String },
     WindowOrderToggle,
-    Reload,
     Ping,
     Shutdown,
 }
@@ -62,11 +61,6 @@ impl IpcServer {
             listener,
             socket_path,
         })
-    }
-
-    /// Get the socket path
-    pub fn socket_path(&self) -> &Path {
-        &self.socket_path
     }
 
     /// Accept a new connection
@@ -224,30 +218,6 @@ pub async fn handle_request(
         } else {
             // Fallback to direct handler methods for non-plugin requests
             match request {
-                IpcRequest::Reload => {
-                    let config_path = handler.config_path().clone();
-                    // Reload config and update plugin configs
-                    match handler.reload_config(&config_path).await {
-                        Ok(()) => {
-                            // Update plugin configs after reload
-                            let config = handler.config().clone();
-                            let niri = handler.niri().clone();
-                            let mut pm = handler.plugin_manager().lock().await;
-                            // Reinitialize plugins with new config
-                            if let Err(e) = pm.init(niri, &config).await {
-                                log::warn!(
-                                    "Failed to reinitialize plugins after config reload: {}",
-                                    e
-                                );
-                            }
-                            IpcResponse::Success
-                        }
-                        Err(e) => {
-                            log::error!("Error reloading config: {}", e);
-                            IpcResponse::Error(e.to_string())
-                        }
-                    }
-                }
                 IpcRequest::Ping => IpcResponse::Pong,
                 IpcRequest::Shutdown => {
                     // Notify the daemon loop to shutdown
@@ -259,7 +229,7 @@ pub async fn handle_request(
                 IpcRequest::ScratchpadToggle { .. } | IpcRequest::ScratchpadAdd { .. } => {
                     // Check if scratchpads plugin should be enabled but isn't
                     let config = handler.config();
-                    if config.is_scratchpads_enabled() {
+                    if config.piri.plugins.is_enabled("scratchpads") {
                         IpcResponse::Error("Scratchpads plugin is enabled but not initialized. Please restart the daemon.".to_string())
                     } else {
                         IpcResponse::Error("Scratchpads plugin is not enabled. Please enable it in the configuration file (piri.plugins.scratchpads = true).".to_string())
@@ -268,7 +238,7 @@ pub async fn handle_request(
                 IpcRequest::SingletonToggle { name: _ } => {
                     // Check if singleton plugin should be enabled but isn't
                     let config = handler.config();
-                    if config.is_singleton_enabled() {
+                    if config.piri.plugins.is_enabled("singleton") {
                         IpcResponse::Error(format!("Singleton plugin is enabled but not initialized. Please restart the daemon."))
                     } else {
                         IpcResponse::Error(format!("Singleton plugin is not enabled. Please enable it in the configuration file (piri.plugins.singleton = true)."))
@@ -277,7 +247,7 @@ pub async fn handle_request(
                 IpcRequest::WindowOrderToggle => {
                     // Check if window_order plugin should be enabled but isn't
                     let config = handler.config();
-                    if config.is_window_order_enabled() {
+                    if config.piri.plugins.is_enabled("window_order") {
                         IpcResponse::Error("WindowOrder plugin is enabled but not initialized. Please restart the daemon.".to_string())
                     } else {
                         IpcResponse::Error("WindowOrder plugin is not enabled. Please enable it in the configuration file (piri.plugins.window_order = true).".to_string())

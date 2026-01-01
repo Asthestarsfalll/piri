@@ -11,9 +11,12 @@ mod daemon;
 mod ipc;
 mod niri;
 mod plugins;
+mod utils;
 
 use commands::CommandHandler;
 use config::Config;
+use ipc::{IpcClient, IpcRequest, IpcResponse};
+use utils::{send_notification, set_process_name};
 
 #[derive(Parser)]
 #[command(name = "piri")]
@@ -57,8 +60,6 @@ enum Commands {
         #[command(subcommand)]
         action: WindowOrderAction,
     },
-    /// Reload configuration
-    Reload,
     /// Stop the daemon
     Stop,
     /// Generate shell completion script
@@ -107,18 +108,9 @@ enum Shell {
 }
 
 // Custom tokio runtime with process name setting
-#[cfg(target_os = "linux")]
 fn create_runtime() -> tokio::runtime::Runtime {
-    use std::ffi::CString;
-    use std::os::raw::c_char;
-    const PR_SET_NAME: libc::c_int = 15;
-
     // Set process name before creating runtime
-    if let Ok(name) = CString::new("piri") {
-        unsafe {
-            libc::prctl(PR_SET_NAME, name.as_ptr() as *const c_char, 0, 0, 0);
-        }
-    }
+    set_process_name("piri");
 
     // Create runtime with thread name
     tokio::runtime::Builder::new_multi_thread()
@@ -126,11 +118,6 @@ fn create_runtime() -> tokio::runtime::Runtime {
         .enable_all()
         .build()
         .expect("Failed to create tokio runtime")
-}
-
-#[cfg(not(target_os = "linux"))]
-fn create_runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Runtime::new().expect("Failed to create tokio runtime")
 }
 
 fn main() -> Result<()> {
@@ -186,140 +173,71 @@ async fn async_main() -> Result<()> {
 
             info!("Starting daemon");
             if let Err(e) = daemon::run(handler).await {
+                send_notification("piri", &format!("Start failed: {}", e));
                 eprintln!("Failed to start daemon: {}", e);
                 eprintln!("Error chain: {:?}", e);
                 return Err(e);
             }
         }
         Commands::Scratchpads { name, action } => {
-            // Send command to daemon via IPC
-            use crate::ipc::{IpcClient, IpcRequest, IpcResponse};
-
             let client = IpcClient::new(None);
-
             match action {
                 ScratchpadAction::Toggle => {
-                    let response = client
-                        .send_request(IpcRequest::ScratchpadToggle { name: name.clone() })
-                        .await?;
-                    match response {
-                        IpcResponse::Success => {
-                            info!("Scratchpad '{}' toggled", name);
-                        }
-                        IpcResponse::Error(e) => {
-                            anyhow::bail!("Failed to toggle scratchpad: {}", e);
-                        }
-                        _ => {
-                            anyhow::bail!("Unexpected response from daemon");
-                        }
-                    }
+                    handle_ipc_response(
+                        client
+                            .send_request(IpcRequest::ScratchpadToggle { name: name.clone() })
+                            .await,
+                        &format!("Scratchpad '{}' toggled", name),
+                        "Failed to toggle scratchpad",
+                    )?;
                 }
                 ScratchpadAction::Add { direction } => {
-                    let response = client
-                        .send_request(IpcRequest::ScratchpadAdd {
-                            name: name.clone(),
-                            direction: direction.clone(),
-                        })
-                        .await?;
-                    match response {
-                        IpcResponse::Success => {
-                            info!("Scratchpad '{}' added with direction '{}'", name, direction);
-                        }
-                        IpcResponse::Error(e) => {
-                            anyhow::bail!("Failed to add scratchpad: {}", e);
-                        }
-                        _ => {
-                            anyhow::bail!("Unexpected response from daemon");
-                        }
-                    }
+                    handle_ipc_response(
+                        client
+                            .send_request(IpcRequest::ScratchpadAdd {
+                                name: name.clone(),
+                                direction: direction.clone(),
+                            })
+                            .await,
+                        &format!("Scratchpad '{}' added with direction '{}'", name, direction),
+                        "Failed to add scratchpad",
+                    )?;
                 }
             }
         }
         Commands::Singleton { name, action } => {
-            // Send command to daemon via IPC
-            use crate::ipc::{IpcClient, IpcRequest, IpcResponse};
-
             let client = IpcClient::new(None);
-
             match action {
                 SingletonAction::Toggle => {
-                    let response = client
-                        .send_request(IpcRequest::SingletonToggle { name: name.clone() })
-                        .await?;
-                    match response {
-                        IpcResponse::Success => {
-                            info!("Singleton '{}' toggled", name);
-                        }
-                        IpcResponse::Error(e) => {
-                            anyhow::bail!("Failed to toggle singleton: {}", e);
-                        }
-                        _ => {
-                            anyhow::bail!("Unexpected response from daemon");
-                        }
-                    }
+                    handle_ipc_response(
+                        client
+                            .send_request(IpcRequest::SingletonToggle { name: name.clone() })
+                            .await,
+                        &format!("Singleton '{}' toggled", name),
+                        "Failed to toggle singleton",
+                    )?;
                 }
             }
         }
         Commands::WindowOrder { action } => {
-            // Send command to daemon via IPC
-            use crate::ipc::{IpcClient, IpcRequest, IpcResponse};
-
             let client = IpcClient::new(None);
-
             match action {
                 WindowOrderAction::Toggle => {
-                    let response = client.send_request(IpcRequest::WindowOrderToggle).await?;
-                    match response {
-                        IpcResponse::Success => {
-                            info!("Window order toggled");
-                        }
-                        IpcResponse::Error(e) => {
-                            anyhow::bail!("Failed to toggle window order: {}", e);
-                        }
-                        _ => {
-                            anyhow::bail!("Unexpected response from daemon");
-                        }
-                    }
-                }
-            }
-        }
-        Commands::Reload => {
-            // Send reload command to daemon via IPC
-            use crate::ipc::{IpcClient, IpcRequest, IpcResponse};
-
-            let client = IpcClient::new(None);
-            let response = client.send_request(IpcRequest::Reload).await?;
-
-            match response {
-                IpcResponse::Success => {
-                    info!("Configuration reloaded");
-                }
-                IpcResponse::Error(e) => {
-                    anyhow::bail!("Failed to reload configuration: {}", e);
-                }
-                _ => {
-                    anyhow::bail!("Unexpected response from daemon");
+                    handle_ipc_response(
+                        client.send_request(IpcRequest::WindowOrderToggle).await,
+                        "Window order toggled",
+                        "Failed to toggle window order",
+                    )?;
                 }
             }
         }
         Commands::Stop => {
-            // Send stop command to daemon via IPC
-            use crate::ipc::{IpcClient, IpcRequest, IpcResponse};
-
             let client = IpcClient::new(None);
-            let response = client.send_request(IpcRequest::Shutdown).await?;
-
-            match response {
-                IpcResponse::Success => {
-                    info!("Daemon stopped");
-                }
-                IpcResponse::Error(e) => {
-                    anyhow::bail!("Failed to stop daemon: {}", e);
-                }
-                _ => {
-                    anyhow::bail!("Unexpected response from daemon");
-                }
-            }
+            handle_ipc_response(
+                client.send_request(IpcRequest::Shutdown).await,
+                "Daemon stopped",
+                "Failed to stop daemon",
+            )?;
         }
         Commands::Completion { shell } => {
             let mut cmd = Cli::command();
@@ -336,4 +254,29 @@ async fn async_main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn handle_ipc_response(
+    result: Result<IpcResponse>,
+    success_msg: &str,
+    error_prefix: &str,
+) -> Result<()> {
+    match result {
+        Ok(IpcResponse::Success) => {
+            println!("{}", success_msg);
+            Ok(())
+        }
+        Ok(IpcResponse::Error(e)) => {
+            send_notification("piri", &e);
+            anyhow::bail!("{}: {}", error_prefix, e);
+        }
+        Ok(IpcResponse::Pong) => {
+            println!("Pong");
+            Ok(())
+        }
+        Err(e) => {
+            send_notification("piri", &format!("Connection failed: {}", e));
+            Err(e)
+        }
+    }
 }

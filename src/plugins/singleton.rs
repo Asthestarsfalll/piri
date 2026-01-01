@@ -27,15 +27,6 @@ impl SingletonManager {
         }
     }
 
-    /// Helper function to run blocking operations
-    async fn run_blocking<F, T>(&self, f: F) -> Result<T>
-    where
-        F: FnOnce(NiriIpc) -> Result<T> + Send + 'static,
-        T: Send + 'static,
-    {
-        window_utils::run_blocking(self.niri.clone(), f).await
-    }
-
     /// Extract app_id pattern from command
     /// For example, "google-chrome-stable" from "/usr/bin/google-chrome-stable" or "google-chrome-stable --some-arg"
     fn extract_app_id_from_command(command: &str) -> String {
@@ -60,7 +51,7 @@ impl SingletonManager {
         // Check if we already have this singleton registered
         if let Some(&window_id) = self.singletons.get(name) {
             // Check if the registered window still exists by checking window list
-            let windows = self.run_blocking(|niri| niri.get_windows()).await?;
+            let windows = self.niri.get_windows().await?;
             if let Some(window) = windows.iter().find(|w| w.id == window_id) {
                 // Window exists, focus it
                 info!(
@@ -111,6 +102,7 @@ impl SingletonManager {
             &window_match,
             name,
             50, // max_attempts: 5 seconds with 100ms intervals
+            &self.matcher_cache,
         )
         .await?;
 
@@ -138,9 +130,7 @@ pub struct SingletonPlugin {
 impl SingletonPlugin {
     pub fn new() -> Self {
         Self {
-            manager: SingletonManager::new(
-                NiriIpc::new(None).expect("Failed to initialize niri IPC"),
-            ),
+            manager: SingletonManager::new(NiriIpc::new(None)),
             config: Config::default(),
         }
     }

@@ -23,7 +23,7 @@ pub struct EmptyPlugin {
 impl EmptyPlugin {
     pub fn new() -> Self {
         Self {
-            niri: NiriIpc::new(None).expect("Failed to initialize niri IPC"),
+            niri: NiriIpc::new(None),
             config: Arc::new(Mutex::new(EmptyPluginConfig::default())),
             last_workspace: Arc::new(Mutex::new(None)),
             workspace_empty: Arc::new(Mutex::new(HashMap::new())),
@@ -46,12 +46,8 @@ impl EmptyPlugin {
 
                 // WorkspaceActivated only gives us the workspace id, not the full workspace info
                 // We need to query the current workspace state to determine idx and if it's empty
-                let niri_clone = niri.clone();
-                let workspaces_result =
-                    tokio::task::spawn_blocking(move || niri_clone.get_workspaces()).await;
-
-                match workspaces_result {
-                    Ok(Ok(workspaces)) => {
+                match niri.get_workspaces().await {
+                    Ok(workspaces) => {
                         // Find the workspace with matching id
                         if let Some(focused_ws) =
                             workspaces.into_iter().find(|ws| ws.id == *id && ws.is_focused)
@@ -138,11 +134,8 @@ impl EmptyPlugin {
                             );
                         }
                     }
-                    Ok(Err(e)) => {
-                        debug!("WorkspaceActivated: failed to get workspaces: {}", e);
-                    }
                     Err(e) => {
-                        debug!("WorkspaceActivated: task join error: {}", e);
+                        debug!("WorkspaceActivated: failed to get workspaces: {}", e);
                     }
                 }
             }
@@ -271,12 +264,6 @@ impl crate::plugins::Plugin for EmptyPlugin {
         drop(config_guard);
 
         // Event listener is now handled by PluginManager
-        Ok(())
-    }
-
-    async fn run(&mut self) -> Result<()> {
-        // Event-driven plugin, no polling needed
-        // The event listener is started in init() and runs in a separate task
         Ok(())
     }
 

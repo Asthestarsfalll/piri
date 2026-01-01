@@ -87,6 +87,8 @@ cp config.example.toml ~/.config/niri/piri.toml
 
 ### 启动守护进程
 
+#### 手动启动
+
 ```bash
 # 启动守护进程（前台运行）
 piri daemon
@@ -97,12 +99,16 @@ piri daemon
 piri --debug daemon
 ```
 
-### 重新加载配置
+#### 自动启动（推荐）
 
-```bash
-# 重新加载配置文件（无需重启守护进程）
-piri reload
+在 niri 配置文件中添加以下配置，让 piri daemon 在 niri 启动时自动运行：
+
+编辑 `~/.config/niri/config.kdl`，在 `spawn-at-startup` 部分添加：
+
+```kdl
+spawn-at-startup "bash" "-c" "/path/to/piri daemon > /dev/null 2>&1 &"
 ```
+
 
 ### Shell 自动补全
 
@@ -301,9 +307,9 @@ piri window_order toggle
 
 ## 文档
 
-- [架构设计](docs/architecture.md) - 项目架构和工作原理
-- [插件系统](docs/plugins.md) - 插件系统详细说明
-- [开发指南](docs/development.md) - 开发、扩展和贡献指南
+- [架构设计](docs/zh/architecture.md) - 项目架构和工作原理
+- [插件系统](docs/zh/plugins/plugins.md) - 插件系统详细说明
+- [开发指南](docs/zh/development.md) - 开发、扩展和贡献指南
 
 ## 许可证
 

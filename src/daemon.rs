@@ -1,7 +1,6 @@
-use anyhow::{Context, Result};
-use log::{info, warn};
-use std::ffi::CString;
-use std::os::unix::process::CommandExt;
+use anyhow::Result;
+use log::{error, info, warn};
+use notify::{RecursiveMode, Watcher};
 use std::sync::Arc;
 use tokio::signal;
 use tokio::sync::Mutex;
@@ -10,48 +9,73 @@ use crate::commands::CommandHandler;
 use crate::ipc::{handle_request, IpcServer};
 use crate::niri::NiriIpc;
 use crate::plugins::PluginManager;
+use crate::utils::{send_notification, set_process_name};
 use niri_ipc::Event;
 use tokio::sync::mpsc;
 
-/// Set the process name (for Linux)
-/// This sets the thread name, which is what shows up in `ps -o comm=`
-#[cfg(target_os = "linux")]
-fn set_process_name(name: &str) {
-    use std::os::raw::c_char;
-
-    // PR_SET_NAME is 15 on Linux
-    const PR_SET_NAME: libc::c_int = 15;
-
-    // Truncate to 15 bytes (16 bytes including null terminator) as per prctl limitation
-    let truncated = if name.len() > 15 { &name[..15] } else { name };
-
-    let name_cstr = match CString::new(truncated) {
-        Ok(s) => s,
-        Err(_) => return, // Invalid name, skip
+/// Start a config file watcher that triggers reload on change
+async fn start_config_watcher(
+    handler: Arc<Mutex<CommandHandler>>,
+    plugin_manager: Arc<Mutex<PluginManager>>,
+    niri: NiriIpc,
+) -> Result<()> {
+    let (tx, mut rx) = mpsc::channel(1);
+    let config_path = {
+        let h = handler.lock().await;
+        h.config_path().clone()
     };
 
-    unsafe {
-        libc::prctl(PR_SET_NAME, name_cstr.as_ptr() as *const c_char, 0, 0, 0);
-    }
-}
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        if let Ok(event) = res {
+            if event.kind.is_modify() {
+                let _ = tx.blocking_send(());
+            }
+        }
+    })?;
 
-#[cfg(not(target_os = "linux"))]
-fn set_process_name(_name: &str) {
-    // No-op on non-Linux systems
+    watcher.watch(&config_path, RecursiveMode::NonRecursive)?;
+
+    // Spawn a task to handle reload signals
+    tokio::spawn(async move {
+        // Keep watcher alive
+        let _watcher = watcher;
+
+        while let Some(_) = rx.recv().await {
+            info!("Config file modified, reloading...");
+            // Add a small delay to avoid partial reads if multiple modify events fire
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+            let mut h = handler.lock().await;
+            let path = h.config_path().clone();
+            if let Err(e) = h.reload_config(&path).await {
+                error!("Failed to auto-reload config: {}", e);
+                send_notification("piri", &format!("Auto-reload failed: {}", e));
+            } else {
+                let config = h.config().clone();
+                let niri_clone = niri.clone();
+                let mut pm = plugin_manager.lock().await;
+                if let Err(e) = pm.init(niri_clone, &config).await {
+                    error!("Failed to reinitialize plugins after auto-reload: {}", e);
+                    send_notification("piri", &format!("Plugin reinit failed: {}", e));
+                } else {
+                    info!("Config auto-reloaded successfully");
+                }
+            }
+        }
+    });
+
+    Ok(())
 }
 
 /// Run daemon main loop (internal function)
 async fn run_daemon_loop(
     ipc_server: IpcServer,
-    handler: CommandHandler,
+    handler: Arc<Mutex<CommandHandler>>,
     plugin_manager: Arc<Mutex<PluginManager>>,
     mut event_rx: mpsc::UnboundedReceiver<Event>,
     niri: NiriIpc,
 ) -> Result<()> {
     eprintln!("[DAEMON] run_daemon_loop: Starting...");
-
-    // Wrap handler in Arc<Mutex<>> for shared access
-    let handler = Arc::new(Mutex::new(handler));
 
     // Shared shutdown flag
     let shutdown = Arc::new(tokio::sync::Notify::new());
@@ -82,9 +106,12 @@ async fn run_daemon_loop(
             event_result = event_rx.recv() => {
                 match event_result {
                     Some(event) => {
-                        // Distribute event to all plugins
-                        let mut pm = plugin_manager.lock().await;
-                        pm.distribute_event(&event, &niri).await;
+                        let pm = plugin_manager.clone();
+                        let niri_clone = niri.clone();
+                        tokio::spawn(async move {
+                            let mut pm = pm.lock().await;
+                            pm.distribute_event(&event, &niri_clone).await;
+                        });
                     }
                     None => {
                         // Channel closed, event listener stopped
@@ -172,6 +199,16 @@ async fn run_daemon(mut handler: CommandHandler) -> Result<()> {
     let plugin_manager = Arc::new(Mutex::new(plugin_manager));
     handler.set_plugin_manager(plugin_manager.clone());
 
+    // Wrap handler in Arc<Mutex<>> early to share with config watcher
+    let handler = Arc::new(Mutex::new(handler));
+
+    // Start config watcher for hot-reload
+    if let Err(e) =
+        start_config_watcher(handler.clone(), plugin_manager.clone(), niri.clone()).await
+    {
+        warn!("Failed to start config watcher: {}", e);
+    }
+
     eprintln!("[DAEMON] run_daemon: Setting up signal handlers...");
     info!("Setting up signal handlers...");
 
@@ -205,122 +242,13 @@ async fn run_daemon(mut handler: CommandHandler) -> Result<()> {
 
 /// Run daemon
 pub async fn run(handler: CommandHandler) -> Result<()> {
-    let is_daemon = std::env::var("PIRI_DAEMON").is_ok();
-
-    // Set process name to "piri" so it shows correctly in process list
     set_process_name("piri");
 
-    if is_daemon {
-        eprintln!("[DAEMON] Starting piri daemon (daemonized mode)");
+    if std::env::var("PIRI_DAEMON").is_ok() {
         info!("Starting piri daemon (daemonized mode)");
     } else {
         info!("Starting piri daemon");
     }
 
-    eprintln!("[DAEMON] About to call run_daemon");
-    match run_daemon(handler).await {
-        Ok(()) => {
-            eprintln!("[DAEMON] run_daemon returned successfully");
-            Ok(())
-        }
-        Err(e) => {
-            // In daemon mode, stderr is still open, so we can print errors
-            eprintln!("[DAEMON] Daemon failed to start: {}", e);
-            eprintln!("[DAEMON] Error chain: {:?}", e);
-            Err(e)
-        }
-    }
-}
-
-/// Daemonize the process (synchronous version)
-/// This should be called from a blocking thread, not from within tokio runtime
-pub fn daemonize_sync(handler: CommandHandler) -> Result<()> {
-    info!("Daemonizing piri...");
-
-    // Get socket path to check if it exists later
-    use crate::ipc::get_socket_path;
-    let socket_path = get_socket_path();
-
-    // Fork the process
-    match unsafe { libc::fork() } {
-        -1 => anyhow::bail!("Failed to fork process"),
-        0 => {
-            // Child process
-            // Create a new session
-            if unsafe { libc::setsid() } == -1 {
-                anyhow::bail!("Failed to create new session");
-            }
-
-            // Fork again to ensure we're not a session leader
-            match unsafe { libc::fork() } {
-                -1 => anyhow::bail!("Failed to fork process again"),
-                0 => {
-                    // Second child - this is the actual daemon
-                    // Change working directory
-                    std::env::set_current_dir("/").unwrap();
-
-                    // Close stdin and stdout, but keep stderr open for error reporting
-                    // We'll close stderr after IPC server is successfully created
-                    unsafe {
-                        libc::close(0); // stdin
-                        libc::close(1); // stdout
-                                        // Don't close stderr yet - we need it for error messages
-                    }
-
-                    // Set environment variable to mark this as a daemon process
-                    std::env::set_var("PIRI_DAEMON", "1");
-
-                    // Re-execute the program
-                    // This is the simplest and most reliable way to daemonize a tokio program
-                    // The new process will have a clean tokio runtime
-                    let exe = std::env::current_exe()
-                        .unwrap_or_else(|_| std::path::PathBuf::from("piri"));
-
-                    let config_path = handler.config_path().to_string_lossy().to_string();
-                    let mut cmd = std::process::Command::new(&exe);
-                    cmd.arg("daemon").arg("--config").arg(&config_path);
-
-                    // Execute the new process (replaces current process)
-                    // Stderr is still open, so errors can be logged
-                    let _ = cmd.exec();
-                    // This should never be reached, but just in case
-                    std::process::exit(1);
-                }
-                _ => {
-                    // First child exits
-                    std::process::exit(0);
-                }
-            }
-        }
-        _ => {
-            // Parent process - wait for socket to be created before exiting
-            // This ensures the socket is ready when the parent exits
-            let mut attempts = 0;
-            while attempts < 50 {
-                // Wait up to 5 seconds
-                if socket_path.exists() {
-                    info!("Socket created, parent exiting");
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(100));
-                attempts += 1;
-            }
-            std::process::exit(0);
-        }
-    }
-
-    // This line is unreachable because all branches either exit or return an error
-    // but we need to return a value to satisfy the function signature
-    #[allow(unreachable_code)]
-    Ok(())
-}
-
-/// Daemonize the process (async wrapper)
-/// Note: This should be called from outside tokio runtime context
-pub async fn daemonize(handler: CommandHandler) -> Result<()> {
-    // We need to drop out of the async context before forking
-    // Use spawn_blocking to move to a blocking thread
-    tokio::task::spawn_blocking(move || daemonize_sync(handler))
-        .await
-        .context("Failed to spawn daemonize task")?
+    run_daemon(handler).await
 }

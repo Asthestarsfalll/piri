@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use log::{debug, info, warn};
 use std::collections::HashMap;
-use tokio::time::{sleep, Duration};
+use tokio::time::Duration;
 
 use crate::config::{Config, ScratchpadConfig};
 use crate::ipc::IpcRequest;
@@ -40,15 +40,6 @@ impl ScratchpadManager {
         }
     }
 
-    /// Helper function to run blocking operations
-    async fn run_blocking<F, T>(&self, f: F) -> Result<T>
-    where
-        F: FnOnce(NiriIpc) -> Result<T> + Send + 'static,
-        T: Send + 'static,
-    {
-        window_utils::run_blocking(self.niri.clone(), f).await
-    }
-
     /// Check if a window is in the current workspace
     fn is_window_in_current_workspace(
         &self,
@@ -66,8 +57,8 @@ impl ScratchpadManager {
     async fn get_workspace_and_windows(
         &self,
     ) -> Result<(crate::niri::Workspace, Vec<crate::niri::Window>)> {
-        let current_workspace = self.run_blocking(|niri| niri.get_focused_workspace()).await?;
-        let windows = self.run_blocking(|niri| niri.get_windows()).await?;
+        let current_workspace = self.niri.get_focused_workspace().await?;
+        let windows = self.niri.get_windows().await?;
         Ok((current_workspace, windows))
     }
 
@@ -86,14 +77,14 @@ impl ScratchpadManager {
         // Check if we already have this scratchpad registered
         let is_currently_visible = self.visibility.get(name).copied().unwrap_or(false);
 
-        // Record focus BEFORE any operations, but only if we're about to show (currently hidden)
+        // RECORD FOCUS BEFORE ANY OPERATIONS, BUT ONLY IF WE'RE ABOUT TO SHOW (CURRENTLY HIDDEN)
         // This ensures we capture the real focused window before any scratchpad operations
         if !is_currently_visible {
             info!(
                 "Getting current focused window before showing scratchpad {} (at toggle start)",
                 name
             );
-            let previous_focused = self.run_blocking(|niri| niri.get_focused_window_id()).await?;
+            let previous_focused = self.niri.get_focused_window_id().await?;
 
             info!(
                 "Recording previous focused window for scratchpad {}: {:?}",
@@ -139,7 +130,7 @@ impl ScratchpadManager {
             info!("Found existing window for scratchpad {}", name);
             // Ensure window is floating before registering
             let window_id = window.id;
-            self.run_blocking(move |niri| niri.set_window_floating(window_id, true)).await?;
+            self.niri.set_window_floating(window_id, true).await?;
 
             // Register the window (this will move it off-screen and set visibility to false)
             self.register_scratchpad(name.to_string(), window.id, config).await?;
@@ -161,6 +152,7 @@ impl ScratchpadManager {
             &window_match,
             &format!("scratchpad {}", name),
             50, // max_attempts: 5 seconds with 100ms intervals
+            &self.matcher_cache,
         )
         .await?;
 
@@ -192,23 +184,23 @@ impl ScratchpadManager {
 
         // Record original workspace before making any changes
         let window_id_for_workspace = window_id;
-        let original_workspace = self
-            .run_blocking(move |niri| -> Result<String> {
-                let windows = niri.get_windows()?;
-                for window in windows {
-                    if window.id == window_id_for_workspace {
-                        if let Some(workspace) = &window.workspace {
-                            return Ok(workspace.clone());
-                        }
-                        if let Some(workspace_id) = window.workspace_id {
-                            return Ok(workspace_id.to_string());
-                        }
+        let original_workspace = {
+            let windows = self.niri.get_windows().await?;
+            let mut res = "1".to_string();
+            for window in windows {
+                if window.id == window_id_for_workspace {
+                    if let Some(workspace) = &window.workspace {
+                        res = workspace.clone();
+                        break;
+                    }
+                    if let Some(workspace_id) = window.workspace_id {
+                        res = workspace_id.to_string();
+                        break;
                     }
                 }
-                // Fallback to "1" if workspace not found
-                Ok("1".to_string())
-            })
-            .await?;
+            }
+            res
+        };
 
         debug!(
             "Scratchpad {} original workspace: {}",
@@ -219,19 +211,18 @@ impl ScratchpadManager {
         // Set window to floating
         self.niri
             .set_window_floating(window_id, true)
+            .await
             .context("Failed to set window to floating")?;
 
         // Get focused output dimensions (for initial registration, use focused output)
-        let (output_width, output_height, output_x, output_y) = self
-            .run_blocking(|niri| -> Result<(u32, u32, i32, i32)> {
-                let focused = niri.get_focused_output()?;
-                if let Some(logical) = focused.logical {
-                    Ok((logical.width, logical.height, logical.x, logical.y))
-                } else {
-                    Ok((1920, 1080, 0, 0))
-                }
-            })
-            .await?;
+        let (output_width, output_height, output_x, output_y) = {
+            let focused = self.niri.get_focused_output().await?;
+            if let Some(logical) = focused.logical {
+                (logical.width, logical.height, logical.x, logical.y)
+            } else {
+                (1920, 1080, 0, 0)
+            }
+        };
 
         // Parse size to get window dimensions
         let (width_ratio, height_ratio) = config.parse_size()?;
@@ -239,14 +230,10 @@ impl ScratchpadManager {
         let window_height = (output_height as f64 * height_ratio) as u32;
 
         // Set window size first
-        let window_id_for_resize = window_id;
-        self.run_blocking(move |niri| {
-            niri.resize_floating_window(window_id_for_resize, window_width, window_height)
-        })
-        .await?;
+        self.niri.resize_floating_window(window_id, window_width, window_height).await?;
 
         // Small delay to ensure resize completes
-        sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Get current window position
         // Note: We use window_width and window_height from config, not from position query
@@ -325,8 +312,7 @@ impl ScratchpadManager {
                 self.visibility.insert(name.to_string(), false);
 
                 // Record current focus before showing scratchpad in current workspace
-                let previous_focused =
-                    self.run_blocking(|niri| niri.get_focused_window_id()).await?;
+                let previous_focused = self.niri.get_focused_window_id().await?;
                 self.previous_focused_windows.insert(name.to_string(), previous_focused);
 
                 // Now show it in current workspace (this will move it to current workspace and show)
@@ -361,18 +347,17 @@ impl ScratchpadManager {
         // before calling this function
 
         // Ensure window is floating
-        self.run_blocking(move |niri| niri.set_window_floating(window_id, true)).await?;
+        self.niri.set_window_floating(window_id, true).await?;
 
         // Move window to focused workspace before showing
         info!("Moving scratchpad {} to focused workspace", name);
-        self.run_blocking(move |niri| niri.move_floating_window(window_id)).await?;
+        self.niri.move_floating_window(window_id).await?;
 
         // Small delay to ensure workspace change completes
-        sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Get output dimensions
-        let (output_width, output_height) =
-            self.run_blocking(|niri| niri.get_output_dimensions()).await?;
+        let (output_width, output_height) = self.niri.get_output_dimensions().await?;
 
         // Parse size
         let (width_ratio, height_ratio) = config.parse_size()?;
@@ -395,11 +380,7 @@ impl ScratchpadManager {
         );
 
         // Resize window
-        let window_id_for_resize = window_id;
-        self.run_blocking(move |niri| {
-            niri.resize_floating_window(window_id_for_resize, window_width, window_height)
-        })
-        .await?;
+        self.niri.resize_floating_window(window_id, window_width, window_height).await?;
 
         // Get current window position
         let (current_x, current_y, _, _) = self
@@ -467,11 +448,10 @@ impl ScratchpadManager {
         info!("Hiding scratchpad window {}", window_id);
 
         // Ensure window is floating before moving
-        self.run_blocking(move |niri| niri.set_window_floating(window_id, true)).await?;
+        self.niri.set_window_floating(window_id, true).await?;
 
         // Get output dimensions
-        let (output_width, output_height) =
-            self.run_blocking(|niri| niri.get_output_dimensions()).await?;
+        let (output_width, output_height) = self.niri.get_output_dimensions().await?;
 
         // Get current window position and size
         let (current_x, current_y, window_width, window_height) = self
@@ -660,9 +640,7 @@ impl ScratchpadManager {
         );
 
         // Move window using relative movement
-        let window_id_for_move = window_id;
-        self.run_blocking(move |niri| niri.move_window_relative(window_id_for_move, rel_x, rel_y))
-            .await?;
+        self.niri.move_window_relative(window_id, rel_x, rel_y).await?;
 
         Ok(())
     }
@@ -741,7 +719,7 @@ impl ScratchpadManager {
         info!("Adding current focused window as scratchpad: {}", name);
 
         // Get current focused window
-        let focused_window_id = self.run_blocking(|niri| niri.get_focused_window_id()).await?;
+        let focused_window_id = self.niri.get_focused_window_id().await?;
 
         let window_id = match focused_window_id {
             Some(id) => id,
@@ -751,7 +729,7 @@ impl ScratchpadManager {
         info!("Found focused window ID: {}", window_id);
 
         // Get window details to extract app_id
-        let windows = self.run_blocking(|niri| niri.get_windows()).await?;
+        let windows = self.niri.get_windows().await?;
 
         let window = windows
             .iter()
@@ -820,9 +798,7 @@ pub struct ScratchpadsPlugin {
 impl ScratchpadsPlugin {
     pub fn new() -> Self {
         Self {
-            manager: ScratchpadManager::new(
-                NiriIpc::new(None).expect("Failed to initialize niri IPC"),
-            ),
+            manager: ScratchpadManager::new(NiriIpc::new(None)),
             config: Config::default(),
         }
     }

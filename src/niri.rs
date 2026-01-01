@@ -5,10 +5,12 @@ use niri_ipc::{
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 /// Wrapper for niri IPC communication
 pub struct NiriIpc {
     socket_path: Option<PathBuf>,
+    socket: Arc<Mutex<Option<Socket>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,18 +70,17 @@ pub struct Workspace {
 }
 
 impl NiriIpc {
-    pub fn new(socket_path: Option<String>) -> Result<Self> {
-        let path = if let Some(path) = socket_path {
-            Some(PathBuf::from(path))
-        } else {
-            None
-        };
+    pub fn new(socket_path: Option<String>) -> Self {
+        let path = socket_path.map(PathBuf::from);
 
-        Ok(Self { socket_path: path })
+        Self {
+            socket_path: path,
+            socket: Arc::new(Mutex::new(None)),
+        }
     }
 
     /// Connect to niri socket
-    fn connect(&self) -> Result<Socket> {
+    fn connect_internal(&self) -> Result<Socket> {
         let socket = if let Some(ref path) = self.socket_path {
             Socket::connect_to(path).context("Failed to connect to niri socket")?
         } else {
@@ -88,14 +89,82 @@ impl NiriIpc {
         Ok(socket)
     }
 
+    /// Helper to send a request and get a response
+    pub async fn send_request(&self, request: Request) -> Result<Response> {
+        let niri = self.clone();
+        tokio::task::spawn_blocking(move || -> Result<Response> {
+            let mut guard = niri.socket.lock().map_err(|_| anyhow::anyhow!("Mutex poisoned"))?;
+            if guard.is_none() {
+                *guard = Some(niri.connect_internal()?);
+            }
+            let socket = guard.as_mut().unwrap();
+
+            let request_clone = request.clone();
+
+            match socket.send(request) {
+                Ok(Reply::Ok(response)) => Ok(response),
+                Ok(Reply::Err(err)) => anyhow::bail!("niri-ipc error: {}", err),
+                Err(_) => {
+                    // Try to reconnect once if send fails
+                    *guard = Some(niri.connect_internal()?);
+                    let socket = guard.as_mut().unwrap();
+                    match socket.send(request_clone)? {
+                        Reply::Ok(response) => Ok(response),
+                        Reply::Err(err) => anyhow::bail!("niri-ipc error: {}", err),
+                    }
+                }
+            }
+        })
+        .await
+        .context("Task join error")?
+    }
+
+    /// Helper to send an action and expect Ok
+    pub async fn send_action(&self, action: Action) -> Result<()> {
+        self.send_request(Request::Action(action)).await?;
+        Ok(())
+    }
+
+    /// Execute multiple IPC operations in a single blocking task to minimize latency
+    /// and ensure they are processed sequentially without gaps.
+    pub async fn execute_batch<F, T>(&self, f: F) -> Result<T>
+    where
+        F: Fn(&mut Socket) -> Result<T> + Send + Sync + 'static,
+        T: Send + 'static,
+    {
+        let niri = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut guard = niri.socket.lock().map_err(|_| anyhow::anyhow!("Mutex poisoned"))?;
+
+            // Ensure we have a connection
+            if guard.is_none() {
+                *guard = Some(niri.connect_internal()?);
+            }
+
+            let res = {
+                let socket = guard.as_mut().unwrap();
+                f(socket)
+            };
+
+            if res.is_ok() {
+                res
+            } else {
+                // On error, try to reconnect once and retry the whole batch
+                *guard = Some(niri.connect_internal()?);
+                let socket = guard.as_mut().unwrap();
+                f(socket)
+            }
+        })
+        .await
+        .context("Task join error")?
+    }
+
     /// Get all windows
-    pub fn get_windows(&self) -> Result<Vec<Window>> {
-        let mut socket = self.connect()?;
-        let request = Request::Windows;
-        match socket.send(request)? {
-            Reply::Ok(Response::Windows(niri_windows)) => {
+    pub async fn get_windows(&self) -> Result<Vec<Window>> {
+        match self.send_request(Request::Windows).await? {
+            Response::Windows(niri_windows) => {
                 // Get workspaces to map workspace_id to workspace name/index
-                let workspaces = self.get_workspaces_for_mapping()?;
+                let workspaces = self.get_workspaces_for_mapping().await?;
 
                 // Convert niri_ipc::Window to our Window type
                 let windows: Vec<Window> = niri_windows
@@ -128,41 +197,27 @@ impl NiriIpc {
                     .collect();
                 Ok(windows)
             }
-            Reply::Ok(_) => {
-                anyhow::bail!("Unexpected response type for Windows request");
-            }
-            Reply::Err(err) => {
-                anyhow::bail!("Failed to get windows: {}", err);
-            }
+            _ => anyhow::bail!("Unexpected response type for Windows request"),
         }
     }
 
     /// Helper function to get workspaces for mapping
-    pub fn get_workspaces_for_mapping(&self) -> Result<Vec<niri_ipc::Workspace>> {
-        let mut socket = self.connect()?;
-        let request = Request::Workspaces;
-        match socket.send(request)? {
-            Reply::Ok(Response::Workspaces(workspaces)) => Ok(workspaces),
-            Reply::Ok(_) => {
-                anyhow::bail!("Unexpected response type for Workspaces request");
-            }
-            Reply::Err(err) => {
-                anyhow::bail!("Failed to get workspaces: {}", err);
-            }
+    pub async fn get_workspaces_for_mapping(&self) -> Result<Vec<niri_ipc::Workspace>> {
+        match self.send_request(Request::Workspaces).await? {
+            Response::Workspaces(workspaces) => Ok(workspaces),
+            _ => anyhow::bail!("Unexpected response type for Workspaces request"),
         }
     }
 
     /// Get all workspaces (public method for plugins)
-    pub fn get_workspaces(&self) -> Result<Vec<niri_ipc::Workspace>> {
-        self.get_workspaces_for_mapping()
+    pub async fn get_workspaces(&self) -> Result<Vec<niri_ipc::Workspace>> {
+        self.get_workspaces_for_mapping().await
     }
 
     /// Get focused output
-    pub fn get_focused_output(&self) -> Result<Output> {
-        let mut socket = self.connect()?;
-        let request = Request::FocusedOutput;
-        match socket.send(request)? {
-            Reply::Ok(Response::FocusedOutput(Some(niri_output))) => {
+    pub async fn get_focused_output(&self) -> Result<Output> {
+        match self.send_request(Request::FocusedOutput).await? {
+            Response::FocusedOutput(Some(niri_output)) => {
                 // Convert niri_ipc::Output to our Output type
                 // niri_ipc::Output doesn't have is_focused field, but we can assume it's focused if we got it
                 Ok(Output {
@@ -176,24 +231,15 @@ impl NiriIpc {
                     }),
                 })
             }
-            Reply::Ok(Response::FocusedOutput(None)) => {
-                anyhow::bail!("No focused output found");
-            }
-            Reply::Ok(_) => {
-                anyhow::bail!("Unexpected response type for FocusedOutput request");
-            }
-            Reply::Err(err) => {
-                anyhow::bail!("Failed to get focused output: {}", err);
-            }
+            Response::FocusedOutput(None) => anyhow::bail!("No focused output found"),
+            _ => anyhow::bail!("Unexpected response type for FocusedOutput request"),
         }
     }
 
     /// Get focused workspace
-    pub fn get_focused_workspace(&self) -> Result<Workspace> {
-        let mut socket = self.connect()?;
-        let request = Request::Workspaces;
-        match socket.send(request)? {
-            Reply::Ok(Response::Workspaces(niri_workspaces)) => {
+    pub async fn get_focused_workspace(&self) -> Result<Workspace> {
+        match self.send_request(Request::Workspaces).await? {
+            Response::Workspaces(niri_workspaces) => {
                 // Find the focused workspace
                 for workspace in &niri_workspaces {
                     if workspace.is_focused {
@@ -206,7 +252,7 @@ impl NiriIpc {
                 }
 
                 // Fallback: try to get from windows if no focused workspace found
-                let windows = self.get_windows()?;
+                let windows = self.get_windows().await?;
                 for window in windows {
                     if let Some(workspace) = &window.workspace {
                         return Ok(Workspace {
@@ -228,133 +274,56 @@ impl NiriIpc {
                     focused: true,
                 })
             }
-            Reply::Ok(_) => {
-                anyhow::bail!("Unexpected response type for Workspaces request");
-            }
-            Reply::Err(err) => {
-                anyhow::bail!("Failed to get workspaces: {}", err);
-            }
+            _ => anyhow::bail!("Unexpected response type for Workspaces request"),
         }
     }
 
     /// Get currently focused window ID
-    pub fn get_focused_window_id(&self) -> Result<Option<u64>> {
-        let mut socket = self.connect()?;
-        let request = Request::FocusedWindow;
-        match socket.send(request)? {
-            Reply::Ok(Response::FocusedWindow(Some(window))) => {
+    pub async fn get_focused_window_id(&self) -> Result<Option<u64>> {
+        match self.send_request(Request::FocusedWindow).await? {
+            Response::FocusedWindow(Some(window)) => {
                 log::debug!("Focused window ID: {}", window.id);
                 Ok(Some(window.id))
             }
-            Reply::Ok(Response::FocusedWindow(None)) => {
+            Response::FocusedWindow(None) => {
                 log::debug!("No focused window found");
                 Ok(None)
             }
-            Reply::Ok(_) => {
-                anyhow::bail!("Unexpected response type for FocusedWindow request");
-            }
-            Reply::Err(err) => {
-                anyhow::bail!("Failed to get focused window: {}", err);
-            }
+            _ => anyhow::bail!("Unexpected response type for FocusedWindow request"),
         }
     }
 
     /// Focus a window by ID
-    pub fn focus_window(&self, window_id: u64) -> Result<()> {
+    pub async fn focus_window(&self, window_id: u64) -> Result<()> {
         log::info!("Focusing window {}", window_id);
-        let mut socket = self.connect()?;
-        let action = Action::FocusWindow { id: window_id };
-        let request = Request::Action(action);
-        match socket.send(request)? {
-            Reply::Ok(_) => {
-                log::debug!("Successfully focused window {}", window_id);
-                Ok(())
-            }
-            Reply::Err(err) => {
-                anyhow::bail!("Failed to focus window: {}", err);
-            }
-        }
-    }
-
-    /// Switch to a workspace by name/index
-    pub fn switch_to_workspace(&self, workspace: &str) -> Result<()> {
-        log::info!("Switching to workspace {}", workspace);
-        let mut socket = self.connect()?;
-
-        // Parse workspace reference - try as index first, then as name
-        let workspace_ref = if let Ok(idx) = workspace.parse::<u8>() {
-            WorkspaceReferenceArg::Index(idx)
-        } else if let Ok(id) = workspace.parse::<u64>() {
-            WorkspaceReferenceArg::Id(id)
-        } else {
-            WorkspaceReferenceArg::Name(workspace.to_string())
-        };
-
-        let action = Action::FocusWorkspace {
-            reference: workspace_ref,
-        };
-        let request = Request::Action(action);
-        match socket.send(request)? {
-            Reply::Ok(_) => {
-                log::debug!("Successfully switched to workspace {}", workspace);
-                Ok(())
-            }
-            Reply::Err(err) => {
-                anyhow::bail!("Failed to switch workspace: {}", err);
-            }
-        }
-    }
-
-    /// Get workspace idx from workspace id
-    /// Returns the idx (index) of a workspace given its id
-    pub fn get_workspace_idx_from_id(&self, workspace_id: u64) -> Result<Option<u64>> {
-        let workspaces = self.get_workspaces_for_mapping()?;
-        for workspace in workspaces {
-            if workspace.id == workspace_id {
-                log::debug!(
-                    "Found workspace idx {} for workspace id {}",
-                    workspace.idx,
-                    workspace_id
-                );
-                return Ok(Some(workspace.idx as u64));
-            }
-        }
-        log::debug!("No workspace found with id {}", workspace_id);
-        Ok(None)
+        self.send_action(Action::FocusWindow { id: window_id }).await
     }
 
     /// Move window to focused monitor
     /// This moves the window to the current focused output/monitor
-    pub fn move_window_to_monitor(&self, window_id: u64) -> Result<()> {
+    pub async fn move_window_to_monitor(&self, window_id: u64) -> Result<()> {
         // Get the focused output name
-        let focused_output = self.get_focused_output()?;
+        let focused_output = self.get_focused_output().await?;
 
         // Move window to the focused monitor using niri_ipc
-        let mut socket = self.connect()?;
-        let action = Action::MoveWindowToMonitor {
+        self.send_action(Action::MoveWindowToMonitor {
             id: Some(window_id),
             output: focused_output.name,
-        };
-        let request = Request::Action(action);
-        match socket.send(request)? {
-            Reply::Ok(_) => Ok(()),
-            Reply::Err(err) => {
-                anyhow::bail!("Failed to move window to monitor: {}", err);
-            }
-        }
+        })
+        .await
     }
 
     /// Move floating window to focused output and workspace
     /// This moves the window to the current focused workspace and monitor
-    pub fn move_floating_window(&self, window_id: u64) -> Result<()> {
+    pub async fn move_floating_window(&self, window_id: u64) -> Result<()> {
         // First, move window to the focused monitor
-        self.move_window_to_monitor(window_id)?;
+        self.move_window_to_monitor(window_id).await?;
 
         // Small delay to ensure monitor change completes
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
         // Get the focused workspace name or index
-        let focused_workspace = self.get_focused_workspace()?;
+        let focused_workspace = self.get_focused_workspace().await?;
 
         // Parse workspace reference
         let workspace_ref = if let Ok(idx) = focused_workspace.name.parse::<u8>() {
@@ -366,25 +335,17 @@ impl NiriIpc {
         };
 
         // Move window to the focused workspace using niri_ipc
-        let mut socket = self.connect()?;
-        let action = Action::MoveWindowToWorkspace {
+        self.send_action(Action::MoveWindowToWorkspace {
             window_id: Some(window_id),
             reference: workspace_ref,
             focus: false, // Don't change focus, just move the window
-        };
-        let request = Request::Action(action);
-        match socket.send(request)? {
-            Reply::Ok(_) => Ok(()),
-            Reply::Err(err) => {
-                anyhow::bail!("Failed to move window to workspace: {}", err);
-            }
-        }
+        })
+        .await
     }
 
     /// Move window to a specific workspace by identifier (name or idx)
-    pub fn move_window_to_workspace(&self, window_id: u64, workspace: &str) -> Result<()> {
+    pub async fn move_window_to_workspace(&self, window_id: u64, workspace: &str) -> Result<()> {
         log::info!("Moving window {} to workspace {}", window_id, workspace);
-        let mut socket = self.connect()?;
 
         // Parse workspace reference - try as index first, then as name
         let workspace_ref = if let Ok(idx) = workspace.parse::<u8>() {
@@ -395,30 +356,16 @@ impl NiriIpc {
             WorkspaceReferenceArg::Name(workspace.to_string())
         };
 
-        let action = Action::MoveWindowToWorkspace {
+        self.send_action(Action::MoveWindowToWorkspace {
             window_id: Some(window_id),
             reference: workspace_ref,
             focus: false, // Don't change focus, just move the window
-        };
-        let request = Request::Action(action);
-        match socket.send(request)? {
-            Reply::Ok(_) => {
-                log::debug!(
-                    "Successfully moved window {} to workspace {}",
-                    window_id,
-                    workspace
-                );
-                Ok(())
-            }
-            Reply::Err(err) => {
-                anyhow::bail!("Failed to move window to workspace: {}", err);
-            }
-        }
+        })
+        .await
     }
 
     /// Set window to floating
-    pub fn set_window_floating(&self, window_id: u64, floating: bool) -> Result<()> {
-        let mut socket = self.connect()?;
+    pub async fn set_window_floating(&self, window_id: u64, floating: bool) -> Result<()> {
         let action = if floating {
             Action::MoveWindowToFloating {
                 id: Some(window_id),
@@ -428,67 +375,45 @@ impl NiriIpc {
                 id: Some(window_id),
             }
         };
-        let request = Request::Action(action);
-        match socket.send(request)? {
-            Reply::Ok(_) => Ok(()),
-            Reply::Err(err) => {
-                anyhow::bail!("Failed to set window floating state: {}", err);
-            }
-        }
+        self.send_action(action).await
     }
 
     /// Move window using relative movement
     /// x and y are relative offsets (positive or negative)
-    pub fn move_window_relative(&self, window_id: u64, x: i32, y: i32) -> Result<()> {
-        let mut socket = self.connect()?;
-        let action = Action::MoveFloatingWindow {
+    pub async fn move_window_relative(&self, window_id: u64, x: i32, y: i32) -> Result<()> {
+        self.send_action(Action::MoveFloatingWindow {
             id: Some(window_id),
             x: PositionChange::AdjustFixed(x as f64),
             y: PositionChange::AdjustFixed(y as f64),
-        };
-        let request = Request::Action(action);
-        match socket.send(request)? {
-            Reply::Ok(_) => Ok(()),
-            Reply::Err(err) => {
-                anyhow::bail!("Failed to move window: {}", err);
-            }
-        }
+        })
+        .await
     }
 
     /// Resize floating window using set-window-width and set-window-height
-    pub fn resize_floating_window(&self, window_id: u64, width: u32, height: u32) -> Result<()> {
-        let mut socket = self.connect()?;
-
+    pub async fn resize_floating_window(
+        &self,
+        window_id: u64,
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
         // Set window width
-        let width_action = Action::SetWindowWidth {
+        self.send_action(Action::SetWindowWidth {
             id: Some(window_id),
             change: SizeChange::SetFixed(width as i32),
-        };
-        let request = Request::Action(width_action);
-        match socket.send(request)? {
-            Reply::Ok(_) => {}
-            Reply::Err(err) => {
-                anyhow::bail!("Failed to set window width: {}", err);
-            }
-        }
+        })
+        .await?;
 
         // Set window height
-        let height_action = Action::SetWindowHeight {
+        self.send_action(Action::SetWindowHeight {
             id: Some(window_id),
             change: SizeChange::SetFixed(height as i32),
-        };
-        let request = Request::Action(height_action);
-        match socket.send(request)? {
-            Reply::Ok(_) => Ok(()),
-            Reply::Err(err) => {
-                anyhow::bail!("Failed to set window height: {}", err);
-            }
-        }
+        })
+        .await
     }
 
     /// Get output dimensions (width and height) for focused output
-    pub fn get_output_dimensions(&self) -> Result<(u32, u32)> {
-        match self.get_focused_output() {
+    pub async fn get_output_dimensions(&self) -> Result<(u32, u32)> {
+        match self.get_focused_output().await {
             Ok(output) => {
                 if let Some(logical) = output.logical {
                     Ok((logical.width, logical.height))
@@ -503,80 +428,14 @@ impl NiriIpc {
             }
         }
     }
-
-    /// Find window by app_id or title using regex pattern
-    /// This method is deprecated, use window_utils::find_window_by_matcher instead
-    /// Kept for backward compatibility, converts string pattern to regex
-    #[deprecated(note = "Use window_utils::find_window_by_matcher with WindowMatcher instead")]
-    pub fn find_window(&self, pattern: &str) -> Result<Option<Window>> {
-        // For backward compatibility, try to match as regex first, then fallback to string matching
-        use regex::Regex;
-
-        let windows = self.get_windows()?;
-
-        // Try regex matching first
-        if let Ok(regex) = Regex::new(pattern) {
-            for window in &windows {
-                // Check app_id
-                if let Some(ref app_id) = window.app_id {
-                    if regex.is_match(app_id) {
-                        return Ok(Some(window.clone()));
-                    }
-                }
-                // Check title
-                if regex.is_match(&window.title) {
-                    return Ok(Some(window.clone()));
-                }
-            }
-        }
-
-        // Fallback to string matching for backward compatibility
-        // Exact match for app_id
-        for window in &windows {
-            if let Some(ref app_id) = window.app_id {
-                if app_id == pattern {
-                    return Ok(Some(window.clone()));
-                }
-            }
-        }
-
-        // Partial match for app_id
-        for window in &windows {
-            if let Some(ref app_id) = window.app_id {
-                if pattern.starts_with(app_id) || app_id.starts_with(pattern) {
-                    return Ok(Some(window.clone()));
-                }
-            }
-        }
-
-        // Partial match for title
-        for window in windows {
-            if window.title.contains(pattern) {
-                return Ok(Some(window));
-            }
-        }
-
-        Ok(None)
-    }
-
-    /// Find window by app_id or title (async version)
-    /// This method is deprecated, use window_utils::find_window_by_matcher instead
-    #[deprecated(note = "Use window_utils::find_window_by_matcher with WindowMatcher instead")]
-    pub async fn find_window_async(&self, pattern: &str) -> Result<Option<Window>> {
-        let pattern = pattern.to_string();
-        let niri = self.clone();
-
-        tokio::task::spawn_blocking(move || niri.find_window(&pattern))
-            .await
-            .context("Task join error")?
-    }
-
-    /// Get window position and size
     /// Returns (x, y, width, height) if available
     /// For floating windows, extracts position from layout.tile_pos_in_workspace_view
     /// and size from layout.window_size
-    pub fn get_window_position(&self, window_id: u64) -> Result<Option<(i32, i32, u32, u32)>> {
-        let windows = self.get_windows()?;
+    pub async fn get_window_position(
+        &self,
+        window_id: u64,
+    ) -> Result<Option<(i32, i32, u32, u32)>> {
+        let windows = self.get_windows().await?;
 
         for window in windows {
             if window.id == window_id {
@@ -604,17 +463,13 @@ impl NiriIpc {
         &self,
         window_id: u64,
     ) -> Result<Option<(i32, i32, u32, u32)>> {
-        let niri = self.clone();
-
-        tokio::task::spawn_blocking(move || niri.get_window_position(window_id))
-            .await
-            .context("Task join error")?
+        self.get_window_position(window_id).await
     }
 
     /// Create an event stream socket for listening to niri events
     /// This returns a socket that has already requested the event stream
     pub fn create_event_stream_socket(&self) -> Result<Socket> {
-        let mut socket = self.connect()?;
+        let mut socket = self.connect_internal()?;
 
         // Request event stream
         match socket.send(Request::EventStream)? {
@@ -633,6 +488,7 @@ impl Clone for NiriIpc {
     fn clone(&self) -> Self {
         Self {
             socket_path: self.socket_path.clone(),
+            socket: self.socket.clone(),
         }
     }
 }

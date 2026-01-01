@@ -1,13 +1,12 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use log::{debug, info, warn};
-use niri_ipc::{Action, Event, Reply, Request};
+use niri_ipc::{Action, Event};
 use std::collections::HashMap;
 
 use crate::config::Config;
 use crate::ipc::IpcRequest;
 use crate::niri::NiriIpc;
-use crate::plugins::window_utils;
 
 /// Window order plugin that reorders windows in workspace based on configuration
 pub struct WindowOrderPlugin {
@@ -18,18 +17,9 @@ pub struct WindowOrderPlugin {
 impl WindowOrderPlugin {
     pub fn new() -> Self {
         Self {
-            niri: NiriIpc::new(None).expect("Failed to initialize niri IPC"),
+            niri: NiriIpc::new(None),
             config: Config::default(),
         }
-    }
-
-    /// Helper function to run blocking operations
-    async fn run_blocking<F, T>(&self, f: F) -> Result<T>
-    where
-        F: FnOnce(NiriIpc) -> Result<T> + Send + 'static,
-        T: Send + 'static,
-    {
-        window_utils::run_blocking(self.niri.clone(), f).await
     }
 
     /// Get order value for a window based on its app_id
@@ -38,14 +28,14 @@ impl WindowOrderPlugin {
         if let Some(app_id) = app_id {
             self.config.get_window_order(app_id)
         } else {
-            self.config.window_order_config.default_weight
+            self.config.get_window_order_default_weight()
         }
     }
 
     /// Check if window ordering should be applied to the given workspace
     /// Returns true if workspaces list is empty (apply to all) or if workspace matches
     fn should_apply_to_workspace(&self, workspace_name: &str) -> bool {
-        let workspaces = &self.config.window_order_config.workspaces;
+        let workspaces = self.config.get_window_order_workspaces();
 
         debug!(
             "Checking if window ordering should apply to workspace '{}', configured workspaces: {:?}",
@@ -71,7 +61,7 @@ impl WindowOrderPlugin {
 
             // Exact idx match
             if let (Ok(configured_idx), Ok(ws_idx)) =
-                (configured_ws.parse::<u8>(), workspace_name.parse::<u8>())
+                (configured_ws.parse::<u32>(), workspace_name.parse::<u32>())
             {
                 if configured_idx == ws_idx {
                     debug!(
@@ -96,10 +86,10 @@ impl WindowOrderPlugin {
         info!("Reordering windows in current workspace");
 
         // Get current focused workspace
-        let current_workspace = self.run_blocking(|niri| niri.get_focused_workspace()).await?;
+        let current_workspace = self.niri.get_focused_workspace().await?;
 
         // Get all windows
-        let windows = self.run_blocking(|niri| niri.get_windows()).await?;
+        let windows: Vec<crate::niri::Window> = self.niri.get_windows().await?;
 
         // Filter windows in current workspace
         let workspace_windows: Vec<_> = windows
@@ -188,10 +178,15 @@ impl WindowOrderPlugin {
         let target_positions: Vec<_> = windows_with_order
             .iter()
             .enumerate()
-            .map(|(idx, (window_id, order, _current_col, app_id))| {
-                let target_col = idx + 1; // 1-based column index
-                (*window_id, target_col, *order, app_id.clone())
-            })
+            .map(
+                |(idx, (window_id, order, _current_col, app_id)): (
+                    usize,
+                    &(u64, u32, usize, Option<String>),
+                )| {
+                    let target_col = idx + 1; // 1-based column index
+                    (*window_id, target_col, *order, app_id.clone())
+                },
+            )
             .collect();
 
         info!(
@@ -217,7 +212,11 @@ impl WindowOrderPlugin {
         // Build window metadata
         let window_info: HashMap<u64, (u32, Option<String>)> = target_positions
             .iter()
-            .map(|(id, _, order, app_id)| (*id, (*order, app_id.clone())))
+            .map(
+                |(id, _, order, app_id): &(u64, usize, u32, Option<String>)| {
+                    (*id, (*order, app_id.clone()))
+                },
+            )
             .collect();
 
         // Check if already in correct positions
@@ -235,7 +234,8 @@ impl WindowOrderPlugin {
         }
 
         // Get currently focused window ID for preference
-        let focused_window_id = self.run_blocking(|niri| niri.get_focused_window_id()).await?;
+        let focused_window_id: Option<u64> =
+            self.niri.get_focused_window_id().await.unwrap_or(None);
 
         // Find optimal move sequence
         // Strategy: Try each possible move, simulate it, and choose the one that
@@ -426,122 +426,32 @@ impl WindowOrderPlugin {
         }
 
         // Get order and app_id for each window in move sequence
-        for (window_id, current_col, target_col) in windows_to_move {
-            let (order, app_id) = window_info.get(&window_id).cloned().unwrap_or((0, None));
+        for (window_id, _, target_col) in windows_to_move {
+            // Focus the window first, then move column
+            if let Err(e) = self.niri.focus_window(window_id).await {
+                warn!("Failed to focus window {}: {}", window_id, e);
+            }
 
-            debug!(
-                "Moving window {} (app_id: {:?}, order: {}) from column {} to column {}",
-                window_id, app_id, order, current_col, target_col
-            );
+            // Move column to target index (1-based)
+            if let Err(e) =
+                self.niri.send_action(Action::MoveColumnToIndex { index: target_col }).await
+            {
+                warn!("Failed to move column to index {}: {}", target_col, e);
+            }
 
-            // Focus the window first, then move column in the same socket connection
-            // This ensures the focus is applied before MoveColumnToIndex is executed
-            self.run_blocking({
-                let window_id = window_id;
-                let target_col = target_col;
-                move |_niri| {
-                    let mut socket = niri_ipc::socket::Socket::connect()
-                        .context("Failed to connect to niri socket")?;
-
-                    // First, focus the window
-                    let focus_action = Action::FocusWindow { id: window_id };
-                    let focus_request = Request::Action(focus_action);
-                    match socket.send(focus_request)? {
-                        Reply::Ok(_) => {}
-                        Reply::Err(err) => {
-                            return Err(anyhow::anyhow!(
-                                "Failed to focus window {}: {}",
-                                window_id,
-                                err
-                            ));
-                        }
-                    }
-
-                    // Small delay to ensure focus is applied
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-
-                    // Move column to target index (1-based)
-                    let column_index = target_col;
-                    let move_action = Action::MoveColumnToIndex {
-                        index: column_index,
-                    };
-                    let move_request = Request::Action(move_action);
-                    match socket.send(move_request)? {
-                        Reply::Ok(_) => Ok(()),
-                        Reply::Err(err) => Err(anyhow::anyhow!(
-                            "Failed to move column to index {}: {}",
-                            column_index,
-                            err
-                        )),
-                    }
-                }
-            })
-            .await?;
-
-            tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
-
-            // Get window order after this move
-            let current_workspace_after =
-                self.run_blocking(|niri| niri.get_focused_workspace()).await?;
-
-            let windows_after = self.run_blocking(|niri| niri.get_windows()).await?;
-
-            let mut positions_after: Vec<_> = windows_after
-                .iter()
-                .filter(|w| {
-                    let in_workspace = match (&w.workspace, &w.workspace_id) {
-                        (Some(ws), _) => ws == &current_workspace_after.name,
-                        (_, Some(ws_id)) => ws_id.to_string() == current_workspace_after.name,
-                        _ => false,
-                    };
-                    in_workspace && !w.floating
-                })
-                .filter_map(|w| {
-                    w.layout
-                        .as_ref()
-                        .and_then(|l| l.pos_in_scrolling_layout)
-                        .map(|(col, _)| (w.id, col, w.app_id.clone()))
-                })
-                .collect();
-
-            positions_after.sort_by_key(|(_, col, _)| *col);
-
-            info!(
-                "Window order after move: {:?}",
-                positions_after
-                    .iter()
-                    .map(|(id, col, app_id)| format!(
-                        "window {} (app_id: {:?}, column: {})",
-                        id, app_id, col
-                    ))
-                    .collect::<Vec<_>>()
-            );
+            // Use a very small delay to allow niri to process the command
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         }
 
         // Restore focus to the previously focused window if it existed
         if let Some(window_id) = focused_window_id {
             info!("Restoring focus to original window {}", window_id);
-            self.run_blocking({
-                let window_id = window_id;
-                move |_niri| {
-                    let mut socket = niri_ipc::socket::Socket::connect()
-                        .context("Failed to connect to niri socket")?;
-                    let action = Action::FocusWindow { id: window_id };
-                    let request = Request::Action(action);
-                    match socket.send(request)? {
-                        Reply::Ok(_) => {
-                            debug!("Successfully restored focus to window {}", window_id);
-                            Ok(())
-                        }
-                        Reply::Err(err) => {
-                            // Log warning but don't fail - the window might have been closed
-                            warn!("Failed to restore focus to window {}: {} (window may have been closed)", window_id, err);
-                            Ok(())
-                        }
-                    }
-                }
-            })
-            .await?;
+            if let Err(e) = self.niri.focus_window(window_id).await {
+                warn!(
+                    "Failed to restore focus to window {}: {} (window may have been closed)",
+                    window_id, e
+                );
+            }
         } else {
             debug!("No original focused window to restore");
         }
@@ -560,9 +470,10 @@ impl crate::plugins::Plugin for WindowOrderPlugin {
     async fn init(&mut self, niri: NiriIpc, config: &Config) -> Result<()> {
         self.config = config.clone();
         self.niri = niri;
+        let weight_count = config.window_order.len();
         info!(
             "WindowOrder plugin initialized with {} window order configurations",
-            config.window_order.len()
+            weight_count
         );
         Ok(())
     }
@@ -603,7 +514,7 @@ impl crate::plugins::Plugin for WindowOrderPlugin {
         }
 
         // Get current workspace to check if event-driven reordering should apply
-        let current_workspace = self.run_blocking(|niri| niri.get_focused_workspace()).await?;
+        let current_workspace = self.niri.get_focused_workspace().await?;
 
         // For event-driven reordering, check workspace filtering
         if !self.should_apply_to_workspace(&current_workspace.name) {

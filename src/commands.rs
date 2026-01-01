@@ -18,13 +18,8 @@ pub struct CommandHandler {
 }
 
 impl CommandHandler {
-    pub fn new(config: Config) -> Self {
-        Self::with_config_path(config, PathBuf::from(""))
-    }
-
     pub fn with_config_path(config: Config, config_path: PathBuf) -> Self {
-        let niri =
-            NiriIpc::new(config.niri.socket_path.clone()).expect("Failed to initialize niri IPC");
+        let niri = NiriIpc::new(config.niri.socket_path.clone());
 
         // Create plugin manager (will be initialized in daemon)
         let plugin_manager = Arc::new(Mutex::new(PluginManager::new()));
@@ -60,11 +55,6 @@ impl CommandHandler {
         &self.niri
     }
 
-    /// Get plugin manager (for future extensions)
-    pub fn plugin_manager(&self) -> &Arc<Mutex<PluginManager>> {
-        &self.plugin_manager
-    }
-
     /// Get config (for future extensions)
     pub fn config(&self) -> &Config {
         &self.config
@@ -75,7 +65,7 @@ impl CommandHandler {
         &self.config_path
     }
 
-    /// Reload configuration from file
+    /// Reload configuration from file (used by hot-reload)
     pub async fn reload_config(&mut self, config_path: &PathBuf) -> Result<()> {
         info!("Reloading configuration from {:?}", config_path);
 

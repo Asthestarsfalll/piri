@@ -1,125 +1,78 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use log::{debug, info, warn};
 use niri_ipc::{Action, Event, Reply, Request};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 
 use crate::niri::NiriIpc;
+
 pub struct AutofillPlugin {
     niri: NiriIpc,
+    // Store handle for debouncing
+    debounce_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl AutofillPlugin {
     pub fn new() -> Self {
         Self {
-            niri: NiriIpc::new(None).expect("Failed to initialize niri IPC"),
+            niri: NiriIpc::new(None),
+            debounce_handle: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Handle a single event - all events trigger the same alignment check
+    /// Handle a single event - all events trigger the same alignment check with debouncing
     async fn handle_event_internal(&self, event: &Event, niri: &NiriIpc) -> Result<()> {
         match event {
-            Event::WindowClosed { .. } => {
-                debug!("Received WindowClosed event, triggering alignment check");
-                Self::check_and_align_last_column(niri).await?;
+            Event::WindowClosed { .. } | Event::WindowLayoutsChanged { .. } => {
+                let niri_clone = niri.clone();
+                let debounce_handle = self.debounce_handle.clone();
+
+                let mut guard = debounce_handle.lock().await;
+                // Cancel previous pending task
+                if let Some(handle) = guard.take() {
+                    handle.abort();
+                }
+
+                *guard = Some(tokio::spawn(async move {
+                    if let Err(e) = Self::check_and_align_last_column(&niri_clone).await {
+                        if !e.to_string().contains("canceled") {
+                            warn!("Autofill alignment failed: {}", e);
+                        }
+                    }
+                }));
             }
-            Event::WindowLayoutsChanged { .. } => {
-                debug!("Received WindowLayoutsChanged event, triggering alignment check");
-                Self::check_and_align_last_column(niri).await?;
-            }
-            other => {
-                // Log other events for debugging
-                debug!("Received other event: {:?}", other);
-            }
+            _ => {}
         }
 
         Ok(())
     }
 
-    /// Align columns in current workspace by focusing first column then last column
+    /// Align columns in current workspace by focusing first then last column
     async fn check_and_align_last_column(niri: &NiriIpc) -> Result<()> {
-        info!("Aligning columns in current workspace");
+        debug!("Aligning columns in current workspace (batched original logic)");
 
-        // Save the currently focused window before alignment
-        let niri_clone = niri.clone();
-        let focused_window_id =
-            tokio::task::spawn_blocking(move || niri_clone.get_focused_window_id())
-                .await
-                .context("Task join error")?
-                .ok()
-                .flatten();
+        niri.execute_batch(|socket| {
+            // 1. Get currently focused window ID
+            let reply = socket.send(Request::FocusedWindow)?;
+            let focused_window_id = match reply {
+                Reply::Ok(niri_ipc::Response::FocusedWindow(Some(w))) => Some(w.id),
+                _ => None,
+            };
 
-        if let Some(window_id) = focused_window_id {
-            debug!("Saving focused window ID: {}", window_id);
-        } else {
-            debug!("No focused window to save");
-        }
+            // 2. Focus column first
+            let _ = socket.send(Request::Action(Action::FocusColumnFirst {}))?;
 
-        // First, focus column first
-        let focus_first_result = tokio::task::spawn_blocking(move || {
-            let mut socket =
-                niri_ipc::socket::Socket::connect().context("Failed to connect to niri socket")?;
-            let action = Action::FocusColumnFirst {};
-            let request = Request::Action(action);
-            match socket.send(request)? {
-                Reply::Ok(_) => Ok(()),
-                Reply::Err(err) => Err(anyhow::anyhow!("Failed to focus column first: {}", err)),
-            }
-        })
-        .await
-        .context("Task join error")?;
-
-        if let Err(e) = focus_first_result {
-            warn!("Failed to focus column first: {}", e);
-            return Err(e);
-        }
-
-        // Then, focus column last (aligns to rightmost position)
-        let focus_last_result = tokio::task::spawn_blocking(move || {
-            let mut socket =
-                niri_ipc::socket::Socket::connect().context("Failed to connect to niri socket")?;
-            let action = Action::FocusColumnLast {};
-            let request = Request::Action(action);
-            match socket.send(request)? {
-                Reply::Ok(_) => Ok(()),
-                Reply::Err(err) => Err(anyhow::anyhow!("Failed to focus column last: {}", err)),
-            }
-        })
-        .await
-        .context("Task join error")?;
-
-        if let Err(e) = focus_last_result {
-            warn!("Failed to focus column last: {}", e);
-            return Err(e);
-        }
-
-        // Restore focus to the previously focused window if it existed
-        if let Some(window_id) = focused_window_id {
-            debug!("Restoring focus to window ID: {}", window_id);
-            let restore_focus_result = tokio::task::spawn_blocking(move || {
-                let mut socket = niri_ipc::socket::Socket::connect()
-                    .context("Failed to connect to niri socket")?;
-                let action = Action::FocusWindow { id: window_id };
-                let request = Request::Action(action);
-                match socket.send(request)? {
-                    Reply::Ok(_) => Ok(()),
-                    Reply::Err(err) => Err(anyhow::anyhow!(
-                        "Failed to restore focus to window: {}",
-                        err
-                    )),
-                }
-            })
-            .await
-            .context("Task join error")?;
-
-            if let Err(e) = restore_focus_result {
-                warn!("Failed to restore focus to window: {}", e);
-                // Don't return error, alignment was successful
+            // 3. If focused window exists, restore focus to it; otherwise focus last column
+            if let Some(window_id) = focused_window_id {
+                let _ = socket.send(Request::Action(Action::FocusWindow { id: window_id }))?;
             } else {
-                debug!("Focus restored successfully");
+                let _ = socket.send(Request::Action(Action::FocusColumnLast {}))?;
             }
-        }
 
-        info!("Columns aligned successfully");
-        Ok(())
+            Ok(())
+        })
+        .await
     }
 }
 
@@ -133,12 +86,6 @@ impl crate::plugins::Plugin for AutofillPlugin {
         self.niri = niri;
         info!("Autofill plugin initialized");
         // Event listener is now handled by PluginManager
-        Ok(())
-    }
-
-    async fn run(&mut self) -> Result<()> {
-        // Event-driven plugin, no polling needed
-        // The event listener is started in init() and runs in a separate task
         Ok(())
     }
 

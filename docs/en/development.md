@@ -11,11 +11,21 @@
    use crate::plugins::Plugin;
    use crate::config::Config;
    use crate::niri::NiriIpc;
+   use crate::ipc::IpcRequest;
    use niri_ipc::Event;
+   use anyhow::Result;
    
    pub struct MyPlugin {
        niri: NiriIpc,
        // Plugin state
+   }
+   
+   impl MyPlugin {
+       pub fn new() -> Self {
+           Self {
+               niri: NiriIpc::new(None),
+           }
+       }
    }
    
    #[async_trait]
@@ -24,13 +34,15 @@
        
        async fn init(&mut self, niri: NiriIpc, config: &Config) -> Result<()> {
            self.niri = niri;
-           // Initialize plugin
+           // Initialize plugin, read configuration, etc.
            Ok(())
        }
        
-       async fn run(&mut self) -> Result<()> {
-           // Periodic tasks (if needed)
-           Ok(())
+       // Handle IPC requests (optional, if plugin needs to respond to client commands)
+       async fn handle_ipc_request(&mut self, request: &IpcRequest) -> Result<Option<Result<()>>> {
+           // If request is handled, return Some(Ok(()))
+           // If not handled, return Ok(None)
+           Ok(None)
        }
        
        // Handle niri events (optional, only for event-driven plugins)
@@ -50,11 +62,29 @@
        fn is_interested_in_event(&self, event: &Event) -> bool {
            matches!(event, Event::WindowOpenedOrChanged { .. })
        }
+       
+       // Update configuration (optional, supports hot reload)
+       async fn update_config(&mut self, niri: NiriIpc, config: &Config) -> Result<()> {
+           // Update plugin configuration
+           Ok(())
+       }
+
+       // Shutdown plugin (optional, for resource cleanup)
+       async fn shutdown(&mut self) -> Result<()> {
+           // Cleanup resources
+           Ok(())
+       }
    }
    ```
-3. Register the plugin in `src/plugins/mod.rs`
-4. Add plugin configuration structure in `src/config.rs`
-5. Update the configuration file example
+3. Register the plugin in `src/plugins/mod.rs`:
+   - Add `pub mod myplugin;` at the top of the file
+   - Add plugin initialization logic in `PluginManager::init` method
+4. Add plugin configuration structure in `src/config.rs`:
+   - Add plugin enable/disable option in `PluginsConfig`
+   - Add plugin-specific configuration structures (if needed)
+5. Add IPC request types in `src/ipc.rs` (if plugin needs to respond to client commands)
+6. Add CLI commands in `src/main.rs` (if plugin needs command-line interface)
+7. Update configuration file example `config.example.toml`
 
 #### Event-Driven Plugins
 
@@ -69,9 +99,14 @@ This greatly simplifies plugin development and ensures efficient resource usage.
 ### Adding New Subcommands
 
 1. Add a new command to the `Commands` enum in `src/main.rs`
-2. Add a handler method in `CommandHandler` in `src/commands.rs`
-3. Implement the corresponding feature module
-4. Add corresponding IPC message types in `src/ipc.rs` (if needed)
+2. Add command handling logic in the `async_main` function in `src/main.rs`
+3. If the command needs to communicate with the daemon:
+   - Add request type to `IpcRequest` enum in `src/ipc.rs`
+   - Add request handling logic in `handle_request` function in `src/ipc.rs`
+   - Or handle through plugin system (if command belongs to a plugin)
+4. If the command needs direct access to niri:
+   - Create `NiriIpc` instance
+   - Call corresponding niri IPC methods
 
 ### Adding New Configuration Options
 

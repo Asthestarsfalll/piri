@@ -16,6 +16,7 @@ use tokio::time::Duration;
 use crate::config::Config;
 use crate::ipc::IpcRequest;
 use crate::niri::NiriIpc;
+use crate::utils::send_notification;
 
 /// Plugin trait that all plugins must implement
 #[async_trait]
@@ -25,12 +26,6 @@ pub trait Plugin: Send + Sync {
 
     /// Initialize the plugin
     async fn init(&mut self, niri: NiriIpc, config: &Config) -> Result<()>;
-
-    /// Run the plugin (called periodically in daemon loop)
-    async fn run(&mut self) -> Result<()> {
-        // Default implementation: do nothing
-        Ok(())
-    }
 
     /// Handle IPC request (optional, for plugins that need to handle IPC commands)
     async fn handle_ipc_request(&mut self, _request: &IpcRequest) -> Result<Option<Result<()>>> {
@@ -143,7 +138,8 @@ impl PluginManager {
             // Check if plugin is interested in this event type
             if plugin.is_interested_in_event(event) {
                 if let Err(e) = plugin.handle_event(event, niri).await {
-                    log::warn!("Error handling event in plugin {}: {}", plugin.name(), e);
+                    log::warn!("Plugin {} error: {}", plugin.name(), e);
+                    send_notification("piri", &format!("Plugin {} error", plugin.name()));
                 }
             }
         }
@@ -187,10 +183,12 @@ impl PluginManager {
 
     /// Initialize all plugins
     pub async fn init(&mut self, niri: NiriIpc, config: &Config) -> Result<()> {
+        let p = &config.piri.plugins;
+
         // Initialize or update scratchpads plugin
         self.init_plugin(
             "scratchpads",
-            config.is_scratchpads_enabled(),
+            p.is_enabled("scratchpads"),
             || scratchpads::ScratchpadsPlugin::new(),
             niri.clone(),
             config,
@@ -200,7 +198,7 @@ impl PluginManager {
         // Initialize or update empty plugin
         self.init_plugin(
             "empty",
-            config.is_empty_enabled(),
+            p.is_enabled("empty"),
             || empty::EmptyPlugin::new(),
             niri.clone(),
             config,
@@ -210,7 +208,7 @@ impl PluginManager {
         // Initialize or update window_rule plugin
         self.init_plugin(
             "window_rule",
-            config.is_window_rule_enabled(),
+            p.is_enabled("window_rule"),
             || window_rule::WindowRulePlugin::new(),
             niri.clone(),
             config,
@@ -220,7 +218,7 @@ impl PluginManager {
         // Initialize or update autofill plugin
         self.init_plugin(
             "autofill",
-            config.is_autofill_enabled(),
+            p.is_enabled("autofill"),
             || autofill::AutofillPlugin::new(),
             niri.clone(),
             config,
@@ -230,7 +228,7 @@ impl PluginManager {
         // Initialize or update singleton plugin
         self.init_plugin(
             "singleton",
-            config.is_singleton_enabled(),
+            p.is_enabled("singleton"),
             || singleton::SingletonPlugin::new(),
             niri.clone(),
             config,
@@ -240,7 +238,7 @@ impl PluginManager {
         // Initialize or update window_order plugin
         self.init_plugin(
             "window_order",
-            config.is_window_order_enabled(),
+            p.is_enabled("window_order"),
             || window_order::WindowOrderPlugin::new(),
             niri.clone(),
             config,
@@ -260,18 +258,6 @@ impl PluginManager {
         }
         Ok(None)
     }
-
-    /// Run all plugins
-    pub async fn run(&mut self) -> Result<()> {
-        for plugin in &mut self.plugins {
-            if let Err(e) = plugin.run().await {
-                log::error!("Error running plugin {}: {}", plugin.name(), e);
-            }
-        }
-        Ok(())
-    }
-
-    /// Shutdown all plugins
     pub async fn shutdown(&mut self) -> Result<()> {
         info!("Shutting down plugins...");
 
