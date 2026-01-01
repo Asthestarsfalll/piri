@@ -16,12 +16,12 @@
 
 ## 插件
 
-- 📦 **Scratchpads**: 强大的窗口管理功能，支持快速访问常用应用程序（详见 [Scratchpads 文档](docs/zh/plugins/scratchpads.md)）
+- 📦 **Scratchpads**: 强大的窗口管理功能，支持快速显示和隐藏常用应用程序的窗口，跨 workspace 和 monitor（详见 [Scratchpads 文档](docs/zh/plugins/scratchpads.md)）
 - 🔌 **Empty**: 在切换到空 workspace 时自动执行命令，用于自动化工作流程（详见 [Empty 文档](docs/zh/plugins/empty.md)）
-- 🎯 **Window Rule**: 根据窗口的 `app_id` 或 `title` 自动将窗口移动到指定 workspace（详见 [Window Rule 文档](docs/zh/plugins/window_rule.md)）
+- 🎯 **Window Rule**: 根据窗口的 `app_id` 或 `title` 使用正则表达式匹配，自动将窗口移动到指定 workspace（详见 [Window Rule 文档](docs/zh/plugins/window_rule.md)）
 - 🔄 **Autofill**: 在窗口关闭或布局改变时自动将最后一列窗口对齐到最右侧位置（详见 [Autofill 文档](docs/zh/plugins/autofill.md)）
-- 🔒 **Singleton**: 管理单例窗口，确保应用程序只有一个实例运行（详见 [Singleton 文档](docs/zh/plugins/singleton.md)）
-- 📋 **Window Order**: 根据配置的权重值自动重排工作区中的窗口顺序（详见 [Window Order 文档](docs/zh/plugins/window_order.md)）
+- 🔒 **Singleton**: 管理单例窗口，切换时如果窗口已存在则聚焦，否则启动应用程序（详见 [Singleton 文档](docs/zh/plugins/singleton.md)）
+- 📋 **Window Order**: 根据配置的权重值自动重排工作区中的窗口顺序，权重值越大窗口越靠左（详见 [Window Order 文档](docs/zh/plugins/window_order.md)）
 
 ## 快速开始
 
@@ -114,7 +114,7 @@ piri completion fish > ~/.config/fish/completions/piri.fish
 
 ![Scratchpads](./assets/scratchpads.mp4)
 
-快速显示和隐藏常用应用程序的窗口。支持跨 workspace 和 monitor。
+快速显示和隐藏常用应用程序的窗口。支持跨 workspace 和 monitor，无论你在哪个工作区或显示器上，都能快速访问你的 scratchpad 窗口。
 
 **配置示例**：
 ```toml
@@ -166,8 +166,9 @@ command = "firefox"
 
 ### Window Rule
 
-对 niri window Rule 的增强，目前支持
-- 根据 workspace idx 打开窗口，而不仅根据 name
+根据窗口的 `app_id` 或 `title` 使用正则表达式匹配，自动将窗口移动到指定的 workspace。这对于自动化窗口管理非常有用，例如将特定应用程序自动分配到特定 workspace。
+
+> **参考**: 此功能类似于 [Hyprland 的 window rules](https://wiki.hypr.land/Configuring/Window-Rules/)。
 
 **配置示例**：
 ```toml
@@ -221,7 +222,7 @@ autofill = true
 
 ### Singleton
 
-管理单例窗口——只应该有一个实例的窗口。切换单例时，如果窗口已存在则聚焦，否则启动应用程序。
+管理单例窗口——只应该有一个实例的窗口。当你切换一个单例时，如果窗口已经存在，它会聚焦该窗口；否则，它会启动应用程序。这对于浏览器、终端或其他通常只需要一个实例运行的工具非常有用。
 
 **配置示例**：
 ```toml

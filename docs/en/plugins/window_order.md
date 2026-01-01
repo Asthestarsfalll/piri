@@ -1,10 +1,8 @@
 # Window Order Plugin
 
-The Window Order plugin automatically reorders windows in a workspace based on configured priority weights. Windows are sorted by their weight values, with larger values positioned further to the left.
+The Window Order plugin automatically reorders windows in a workspace based on configured priority weights, with larger values positioned further to the left.
 
 ## Configuration
-
-Enable the plugin in the configuration file and set window weights:
 
 ```toml
 [piri.plugins]
@@ -23,18 +21,20 @@ ghostty = 70
 
 ### Configuration Options
 
-- **`enable_event_listener`**: Whether to enable event listening. When enabled, windows are automatically reordered when layout changes or new windows open (only works in configured `workspaces`)
-- **`default_weight`**: Default weight value for windows not configured in `[window_order]`
-- **`workspaces`**: Optional, specify which workspaces to apply window ordering. Can be workspace names or indices (array of strings). If empty or not specified, applies to all workspaces
-- **`[window_order]`**: Window weight configuration table, where keys are window `app_id` and values are weights (larger values go to the left)
+- `enable_event_listener`: Whether to enable event listening. When enabled, windows are automatically reordered when layout changes or new windows open (only works in configured `workspaces`)
+- `default_weight`: Default weight value for windows not configured in `[window_order]`
+- `workspaces`: Optional, specify which workspaces to apply window ordering. Can be workspace names or indices (array of strings). If empty or not specified, applies to all workspaces
+- `[window_order]`: Window weight configuration table, where keys are window `app_id` and values are weights (larger values go to the left)
 
 ### Weight Matching Rules
 
-The plugin supports partial matching, for example:
+The plugin supports partial matching:
+
 - Config `ghostty = 70` can match `com.mitchellh.ghostty`
 - Config `google-chrome = 100` can match `google-chrome-stable`
 
 Matching priority:
+
 1. Exact match
 2. Config key is contained in `app_id`
 3. `app_id` is contained in config key
@@ -43,8 +43,6 @@ Matching priority:
 ## Usage
 
 ### Manual Trigger
-
-Manually trigger window reordering via command line:
 
 ```bash
 piri window_order toggle
@@ -57,6 +55,7 @@ piri window_order toggle
 ### Automatic Trigger
 
 If `enable_event_listener` is enabled, the plugin automatically reorders windows when:
+
 - Window layout changes (`WindowLayoutsChanged` event)
 - New window opens (`WindowOpenedOrChanged` event)
 
@@ -66,27 +65,19 @@ If `enable_event_listener` is enabled, the plugin automatically reorders windows
 
 ## How It Works
 
-The Window Order plugin uses an intelligent algorithm to minimize the number of window moves:
+The plugin uses an intelligent algorithm to minimize the number of window moves:
 
-1. **Get Current State**: Get column positions of all tiled windows in the current workspace
-2. **Calculate Target Positions**: Calculate target position for each window based on configured weights
-3. **Optimize Move Sequence**: Use a greedy algorithm to find the solution with minimum moves
-4. **Execute Moves**: Move windows to target positions sequentially
+1. Get column positions of all tiled windows in the current workspace
+2. Calculate target position for each window based on configured weights
+3. Use a greedy algorithm to find the solution with minimum moves
+4. Move windows to target positions sequentially
 
 ### Algorithm Features
 
 - **Minimize Moves**: Prefer moves that get the most windows to correct positions
 - **Minimize Distance**: Among moves with the same move count, choose the one with minimum distance
 - **Prefer Focused Window**: If only one move is needed, prefer moving the currently focused window
-- **Preserve Relative Order**: Windows with the same weight maintain their current relative order to avoid unnecessary moves
-
-### Move Strategy
-
-When moving a window from column A to column B:
-- If A < B (moving right): Windows in columns (A, B] shift left by 1
-- If A > B (moving left): Windows in columns [B, A) shift right by 1
-
-The algorithm simulates the state after each move to select the optimal move sequence.
+- **Preserve Relative Order**: Windows with the same weight maintain their current relative order
 
 ## Features
 
@@ -99,9 +90,9 @@ The algorithm simulates the state after each move to select the optimal move seq
 
 ## Use Cases
 
-- **Workspace Organization**: Keep frequently used applications (browser, editor) fixed on the left side of the workspace
-- **Multi-Window Management**: Maintain relative order when multiple windows of the same application exist
-- **Automated Layout**: Automatically maintain window order through event listening
+- Keep frequently used applications (browser, editor) fixed on the left side of the workspace
+- Maintain relative order when multiple windows of the same application exist
+- Automatically maintain window order through event listening
 
 ## Notes
 
@@ -112,4 +103,3 @@ The algorithm simulates the state after each move to select the optimal move seq
 3. **Larger Weight = Left**: A window with weight 100 will be to the left of a window with weight 80
 4. **Same Weight Preserves Order**: Windows with the same weight don't change relative order to reduce unnecessary moves
 5. **Workspace Matching**: `workspaces` supports workspace names or indices (as strings), e.g., `["1", "2", "dev"]`
-

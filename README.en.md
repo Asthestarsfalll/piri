@@ -16,12 +16,12 @@ Contributions, suggestions, bug reports and comments are welcome.
 
 ## Supported Plugins
 
-- 📦 **Scratchpads**: Powerful window management feature for quick access to frequently used applications (see [Scratchpads documentation](docs/en/plugins/scratchpads.md) for details)
+- 📦 **Scratchpads**: Powerful window management feature that allows you to quickly show and hide windows of frequently used applications, supporting cross-workspace and cross-monitor (see [Scratchpads documentation](docs/en/plugins/scratchpads.md) for details)
 - 🔌 **Empty**: Automatically execute commands when switching to empty workspaces, useful for automating workflows (see [Empty documentation](docs/en/plugins/empty.md) for details)
-- 🎯 **Window Rule**: Automatically move windows to specified workspaces based on `app_id` or `title` (see [Window Rule documentation](docs/en/plugins/window_rule.md) for details)
-- 🔄 **Autofill**: Automatically aligns the last column of windows to the rightmost position when windows are closed (see [Autofill documentation](docs/en/plugins/autofill.md) for details)
-- 🔒 **Singleton**: Manages singleton windows, ensuring applications have only one instance running (see [Singleton documentation](docs/en/plugins/singleton.md) for details)
-- 📋 **Window Order**: Automatically reorder windows in workspace based on configured priority weights (see [Window Order documentation](docs/en/plugins/window_order.md) for details)
+- 🎯 **Window Rule**: Automatically move windows to specified workspaces based on `app_id` or `title` using regular expression matching (see [Window Rule documentation](docs/en/plugins/window_rule.md) for details)
+- 🔄 **Autofill**: Automatically aligns the last column of windows to the rightmost position when windows are closed or layout changes (see [Autofill documentation](docs/en/plugins/autofill.md) for details)
+- 🔒 **Singleton**: Manages singleton windows - when toggling a singleton, if the window exists it focuses it, otherwise it launches the application (see [Singleton documentation](docs/en/plugins/singleton.md) for details)
+- 📋 **Window Order**: Automatically reorder windows in workspace based on configured priority weights, with larger weights positioning windows further to the left (see [Window Order documentation](docs/en/plugins/window_order.md) for details)
 
 
 ## Quick Start
@@ -115,7 +115,7 @@ piri completion fish > ~/.config/fish/completions/piri.fish
 
 ![Scratchpads](./assets/scratchpads.mp4)
 
-Quickly show and hide windows of frequently used applications. Supports cross-workspace and cross-monitor.
+Quickly show and hide windows of frequently used applications. Supports cross-workspace and cross-monitor, so you can quickly access your scratchpad windows regardless of which workspace or monitor you're on.
 
 **Configuration Example**:
 ```toml
@@ -167,8 +167,9 @@ For detailed documentation, please refer to [Plugin System documentation](docs/e
 
 ### Window Rule
 
-An enhancement to niri window rules, currently supports:
-- Opening windows based on workspace idx, not just by name
+Automatically move windows to specified workspaces based on their `app_id` or `title` using regular expression matching. This is very useful for automating window management, such as automatically assigning specific applications to specific workspaces.
+
+> **Reference**: This functionality is similar to [Hyprland's window rules](https://wiki.hypr.land/Configuring/Window-Rules/).
 
 **Configuration Example**:
 ```toml
@@ -222,7 +223,7 @@ For detailed documentation, please refer to the [Autofill documentation](docs/en
 
 ### Singleton
 
-Manages singleton windows - windows that should only have one instance. When toggling a singleton, if the window exists, it focuses it; otherwise, it launches the application.
+Manages singleton windows - windows that should only have one instance. When you toggle a singleton, if the window already exists, it will focus it; otherwise, it will launch the application. This is useful for applications like browsers, terminals, or other tools where you typically only want one instance running.
 
 **Configuration Example**:
 ```toml

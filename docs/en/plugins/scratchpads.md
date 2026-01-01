@@ -1,6 +1,6 @@
-# Scratchpads
+# Scratchpads Plugin
 
-Scratchpads is a powerful window management feature that allows you to quickly show and hide windows of frequently used applications. It supports cross-workspace and cross-monitor functionality, so you can quickly access your scratchpad windows regardless of which workspace or monitor you're on.
+Scratchpads allows you to quickly show and hide windows of frequently used applications, with support for cross-workspace and cross-monitor functionality.
 
 ## Demo Video
 
@@ -8,11 +8,12 @@ Scratchpads is a powerful window management feature that allows you to quickly s
 
 ## Configuration
 
-Add `[scratchpads.{name}]` sections to your configuration file to configure scratchpads. Each scratchpad requires a unique name.
-
-### Configuration Example
+Use the `[scratchpads.{name}]` format to configure scratchpads:
 
 ```toml
+[piri.plugins]
+scratchpads = true
+
 [scratchpads.term]
 direction = "fromRight"
 command = "GTK_IM_MODULE=wayland ghostty --class=float.dropterm"
@@ -35,81 +36,49 @@ margin = 100
   - `fromBottom`: Slide in from bottom
   - `fromLeft`: Slide in from left
   - `fromRight`: Slide in from right
-
 - `command` (required): Full command string to launch the application, can include environment variables and arguments
-
-- `app_id` (required): Application ID used to match windows. This is the key identifier that niri uses to identify windows
-
-- `size` (required): Window size in format `"width% height%"`, e.g., `"40% 60%"` means 40% of screen width and 60% of screen height
-
+- `app_id` (required): Application ID used to match windows
+- `size` (required): Window size in format `"width% height%"`
 - `margin` (required): Margin from screen edge in pixels
 
 ## Usage
 
-### Toggle Scratchpad Visibility
+### Toggle Visibility
 
 ```bash
 piri scratchpads {name} toggle
-```
 
-Examples:
-
-```bash
-# Toggle terminal scratchpad
+# Examples
 piri scratchpads term toggle
-
-# Toggle calculator scratchpad
 piri scratchpads calc toggle
 ```
 
-### Add Current Window as Scratchpad
+### Add Current Window
 
-You can quickly add the currently focused window as a scratchpad without editing the configuration file:
+Quickly add the currently focused window as a scratchpad:
 
 ```bash
 piri scratchpads {name} add {direction}
-```
 
-Parameters:
-- `{name}`: Name of the scratchpad (unique identifier)
-- `{direction}`: Direction from which the window appears, options:
-  - `fromTop`: Slide in from top
-  - `fromBottom`: Slide in from bottom
-  - `fromLeft`: Slide in from left
-  - `fromRight`: Slide in from right
-
-Example:
-
-```bash
-# Add current window as a scratchpad named "mypad", sliding in from right
+# Example
 piri scratchpads mypad add fromRight
 ```
 
-Dynamically added scratchpads will use the default size and margin set in the `[piri.scratchpad]` section of the configuration file. After adding, you can use `piri scratchpads {name} toggle` to show/hide it.
+Dynamically added scratchpads will use the default size and margin set in the `[piri.scratchpad]` section.
 
 ## How It Works
 
-1. **First Launch**: When executing `piri scratchpads {name} toggle`, if the window doesn't exist, it launches the application specified in the configuration
+1. **First Launch**: If the window doesn't exist, launches the application specified in the configuration
+2. **Window Registration**: After finding the window, sets it to floating mode and moves it off-screen
+3. **Show**: Moves the window to the currently focused output and workspace, positions it according to configured direction and size, and focuses the window
+4. **Hide**: Moves the window off-screen and intelligently restores previous focus
 
-2. **Window Registration**: After finding the window, it sets it to floating mode and moves it off-screen
-
-3. **Show/Hide**: 
-   - **Show**: 
-     - Records the currently focused window
-     - Moves the window to the currently focused output and workspace, positioning it according to configured direction and size
-     - Transfers focus to the scratchpad window
-     - **Cross-workspace and cross-monitor support**: Regardless of which workspace or monitor the scratchpad window was originally on, it will automatically move to the currently focused location
-   - **Hide**: 
-     - Directly moves the window off-screen (no need to focus the scratchpad first)
-     - Restores focus:
-       - If the previously focused window is in the current workspace, focus it
-       - If not in the current workspace, and there are other windows in the current workspace, focus the middle window
+**Cross-workspace and cross-monitor**: Regardless of which workspace or monitor the scratchpad window was originally on, it will automatically move to the currently focused location.
 
 ## Features
 
-- ✅ **Cross-workspace support**: Access your scratchpad from any workspace
-- ✅ **Cross-monitor support**: Works in multi-monitor setups, scratchpad automatically appears on the currently focused monitor
-- ✅ **Smart focus management**: Automatically focuses when showing, intelligently restores previous focus when hiding
+- ✅ **Cross-workspace**: Quick access from any workspace
+- ✅ **Cross-monitor**: Automatically appears on the currently focused monitor
+- ✅ **Smart focus management**: Automatically focuses when showing, restores previous focus when hiding
 - ✅ **Flexible configuration**: Customize window size, position, and animation direction
-- ✅ **Dynamic addition**: Quickly add the currently focused window as a scratchpad without editing configuration files
-
+- ✅ **Dynamic addition**: Quickly add the currently focused window as a scratchpad
