@@ -5,7 +5,10 @@ pub mod window_rule;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use log::{info, warn};
+use log::{debug, info, warn};
+use niri_ipc::Event;
+use tokio::sync::mpsc;
+use tokio::time::Duration;
 
 use crate::config::Config;
 use crate::ipc::IpcRequest;
@@ -43,17 +46,103 @@ pub trait Plugin: Send + Sync {
         // Default implementation: do nothing
         Ok(())
     }
+
+    /// Handle niri event (optional, for plugins that need to listen to events)
+    async fn handle_event(&mut self, _event: &Event, _niri: &NiriIpc) -> Result<()> {
+        // Default implementation: do nothing
+        Ok(())
+    }
+
+    /// Check if plugin is interested in a specific event type
+    /// This is used for event filtering to avoid calling plugins that don't care about the event
+    /// Default implementation returns true (receive all events for backward compatibility)
+    fn is_interested_in_event(&self, event: &Event) -> bool {
+        let _ = event; // Suppress unused variable warning
+        true // Default: interested in all events
+    }
 }
 
 /// Plugin manager that manages all plugins
 pub struct PluginManager {
     plugins: Vec<Box<dyn Plugin>>,
+    /// Event listener task handle
+    event_listener_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Channel sender for events (receiver is in the event listener loop)
+    event_sender: Option<mpsc::UnboundedSender<Event>>,
 }
 
 impl PluginManager {
     pub fn new() -> Self {
         Self {
             plugins: Vec::new(),
+            event_listener_handle: None,
+            event_sender: None,
+        }
+    }
+
+    /// Start unified event listener that sends events to channel
+    pub async fn start_event_listener(
+        &mut self,
+        niri: NiriIpc,
+    ) -> Result<mpsc::UnboundedReceiver<Event>> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let tx_clone = tx.clone();
+        self.event_sender = Some(tx);
+
+        let niri_clone = niri.clone();
+        let handle = tokio::spawn(async move {
+            Self::event_listener_loop(niri_clone, tx_clone).await;
+        });
+
+        self.event_listener_handle = Some(handle);
+        info!("Plugin manager unified event listener started");
+        Ok(rx)
+    }
+
+    /// Unified event listener loop that reads events and sends them to channel
+    async fn event_listener_loop(niri: NiriIpc, event_tx: mpsc::UnboundedSender<Event>) {
+        info!("Plugin manager event listener started");
+
+        // Outer loop: reconnect on connection failure
+        loop {
+            let socket = match niri.create_event_stream_socket() {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!("Failed to create event stream: {}, retrying in 1s", e);
+                    tokio::time::sleep(Duration::from_millis(1000)).await;
+                    continue;
+                }
+            };
+
+            let mut read_event = socket.read_events();
+            info!("Event stream connected, waiting for events...");
+
+            while let Ok(event) = read_event() {
+                debug!("Raw event received: {:?}", event);
+
+                // Send event to channel for distribution
+                if event_tx.send(event).is_err() {
+                    warn!("Event channel closed, stopping event listener");
+                    return;
+                }
+            }
+
+            // Connection closed or error - will reconnect in outer loop
+            warn!("Event stream closed, reconnecting...");
+            tokio::time::sleep(Duration::from_millis(1000)).await;
+        }
+    }
+
+    /// Distribute event to all plugins (called from daemon loop)
+    /// Only plugins that are interested in the event type will receive it
+    pub async fn distribute_event(&mut self, event: &Event, niri: &NiriIpc) {
+        for plugin in &mut self.plugins {
+            // Check if plugin is interested in this event type
+            if plugin.is_interested_in_event(event) {
+                if let Err(e) = plugin.handle_event(event, niri).await {
+                    log::warn!("Error handling event in plugin {}: {}", plugin.name(), e);
+                }
+            }
         }
     }
 

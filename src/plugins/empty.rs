@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::time::Duration;
 
 use crate::config::EmptyPluginConfig;
 use crate::niri::NiriIpc;
@@ -19,8 +18,6 @@ pub struct EmptyPlugin {
     last_workspace: Arc<Mutex<Option<String>>>,
     /// Map of workspace identifier to whether it's empty (per-workspace state)
     workspace_empty: Arc<Mutex<HashMap<String, bool>>>,
-    /// Event listener task handle
-    event_listener_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl EmptyPlugin {
@@ -30,7 +27,6 @@ impl EmptyPlugin {
             config: Arc::new(Mutex::new(EmptyPluginConfig::default())),
             last_workspace: Arc::new(Mutex::new(None)),
             workspace_empty: Arc::new(Mutex::new(HashMap::new())),
-            event_listener_handle: None,
         }
     }
 
@@ -43,55 +39,8 @@ impl EmptyPlugin {
         }
     }
 
-    /// Event listener loop that listens to niri events
-    async fn event_listener_loop(
-        niri: NiriIpc,
-        config: Arc<Mutex<EmptyPluginConfig>>,
-        last_workspace: Arc<Mutex<Option<String>>>,
-        workspace_empty: Arc<Mutex<HashMap<String, bool>>>,
-    ) -> Result<()> {
-        info!("Empty plugin event listener started");
-
-        // Outer loop: reconnect on connection failure
-        loop {
-            let mut socket = match niri.create_event_stream_socket() {
-                Ok(s) => s,
-                Err(e) => {
-                    warn!("Failed to create event stream: {}, retrying in 1s", e);
-                    tokio::time::sleep(Duration::from_millis(1000)).await;
-                    continue;
-                }
-            };
-
-            let mut read_event = socket.read_events();
-            info!("Event stream connected, waiting for events...");
-
-            while let Ok(event) = read_event() {
-                debug!("Raw event received: {:?}", event);
-                if let Err(e) =
-                    Self::handle_event(event, &niri, &config, &last_workspace, &workspace_empty)
-                        .await
-                {
-                    warn!("Error handling event: {}", e);
-                }
-            }
-
-            // Connection closed or error - will reconnect in outer loop
-            warn!("Event stream closed, reconnecting...");
-
-            // Reconnect after error
-            tokio::time::sleep(Duration::from_millis(1000)).await;
-        }
-    }
-
-    /// Handle a single event
-    async fn handle_event(
-        event: Event,
-        niri: &NiriIpc,
-        config: &Arc<Mutex<EmptyPluginConfig>>,
-        last_workspace: &Arc<Mutex<Option<String>>>,
-        workspace_empty: &Arc<Mutex<HashMap<String, bool>>>,
-    ) -> Result<()> {
+    /// Handle a single event (internal implementation)
+    async fn handle_event_internal(&self, event: &Event, niri: &NiriIpc) -> Result<()> {
         match event {
             Event::WorkspaceActivated { id, focused } => {
                 if !focused {
@@ -114,7 +63,7 @@ impl EmptyPlugin {
                     Ok(Ok(workspaces)) => {
                         // Find the workspace with matching id
                         if let Some(focused_ws) =
-                            workspaces.into_iter().find(|ws| ws.id == id && ws.is_focused)
+                            workspaces.into_iter().find(|ws| ws.id == *id && ws.is_focused)
                         {
                             let workspace_key = focused_ws.idx.to_string();
                             let is_empty = focused_ws.active_window_id.is_none();
@@ -124,7 +73,7 @@ impl EmptyPlugin {
 
                             // WorkspaceActivated event means workspace has switched
                             // Update last workspace
-                            let mut last_ws = last_workspace.lock().await;
+                            let mut last_ws = self.last_workspace.lock().await;
                             let old_workspace = last_ws.clone();
                             *last_ws = Some(workspace_key.clone());
                             drop(last_ws);
@@ -135,12 +84,15 @@ impl EmptyPlugin {
                             );
 
                             // Update empty state
-                            workspace_empty.lock().await.insert(workspace_key.clone(), is_empty);
+                            self.workspace_empty
+                                .lock()
+                                .await
+                                .insert(workspace_key.clone(), is_empty);
 
                             // Execute command if workspace is empty
                             if is_empty {
                                 // Get current config (may have been updated)
-                                let config_guard = config.lock().await;
+                                let config_guard = self.config.lock().await;
 
                                 // Try direct match first (by idx)
                                 let mut command_found = false;
@@ -174,8 +126,8 @@ impl EmptyPlugin {
                                         &workspace_key,
                                         true,
                                         niri,
-                                        config,
-                                        workspace_empty,
+                                        &self.config,
+                                        &self.workspace_empty,
                                     )
                                     .await?;
                                 }
@@ -328,7 +280,8 @@ impl crate::plugins::Plugin for EmptyPlugin {
     }
 
     async fn init(&mut self, niri: NiriIpc, config: &crate::config::Config) -> Result<()> {
-        self.niri = niri.clone();
+        // Store niri instance first, then clone from self for the async task
+        self.niri = niri;
 
         // Get empty plugin config (converts new format to old format)
         if let Some(empty_config) = config.get_empty_plugin_config() {
@@ -354,23 +307,7 @@ impl crate::plugins::Plugin for EmptyPlugin {
         }
         drop(config_guard);
 
-        // Start event listener task
-        let niri_clone = niri.clone();
-        let config_clone = self.config.clone();
-        let last_workspace = self.last_workspace.clone();
-        let workspace_empty = self.workspace_empty.clone();
-
-        let handle = tokio::spawn(async move {
-            if let Err(e) =
-                Self::event_listener_loop(niri_clone, config_clone, last_workspace, workspace_empty)
-                    .await
-            {
-                log::error!("Empty plugin event listener error: {}", e);
-            }
-        });
-
-        self.event_listener_handle = Some(handle);
-
+        // Event listener is now handled by PluginManager
         Ok(())
     }
 
@@ -381,17 +318,24 @@ impl crate::plugins::Plugin for EmptyPlugin {
     }
 
     async fn shutdown(&mut self) -> Result<()> {
-        // Shutdown is handled by runtime - when runtime shuts down, all tasks are cancelled
-        // No need for plugin-specific shutdown logic
-        info!("Empty plugin shutdown (handled by runtime)");
+        // Shutdown is handled by runtime
+        info!("Empty plugin shutdown");
         Ok(())
+    }
+
+    async fn handle_event(&mut self, event: &Event, niri: &NiriIpc) -> Result<()> {
+        self.handle_event_internal(event, niri).await
+    }
+
+    fn is_interested_in_event(&self, event: &Event) -> bool {
+        matches!(event, Event::WorkspaceActivated { .. })
     }
 
     async fn update_config(&mut self, niri: NiriIpc, config: &crate::config::Config) -> Result<()> {
         info!("Updating empty plugin configuration");
 
         // Update niri instance
-        self.niri = niri.clone();
+        self.niri = niri;
 
         // Get new empty plugin config
         let mut config_guard = self.config.lock().await;

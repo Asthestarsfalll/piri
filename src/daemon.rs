@@ -8,7 +8,10 @@ use tokio::sync::Mutex;
 
 use crate::commands::CommandHandler;
 use crate::ipc::{handle_request, IpcServer};
+use crate::niri::NiriIpc;
 use crate::plugins::PluginManager;
+use niri_ipc::Event;
+use tokio::sync::mpsc;
 
 /// Set the process name (for Linux)
 /// This sets the thread name, which is what shows up in `ps -o comm=`
@@ -42,6 +45,8 @@ async fn run_daemon_loop(
     ipc_server: IpcServer,
     handler: CommandHandler,
     plugin_manager: Arc<Mutex<PluginManager>>,
+    mut event_rx: mpsc::UnboundedReceiver<Event>,
+    niri: NiriIpc,
 ) -> Result<()> {
     eprintln!("[DAEMON] run_daemon_loop: Starting...");
 
@@ -59,10 +64,7 @@ async fn run_daemon_loop(
 
     eprintln!("[DAEMON] run_daemon_loop: Entering main loop, waiting for connections...");
 
-    // Note: Plugins are now event-driven, so we don't need a polling task
-    // Event listeners are started in plugin init() methods
-
-    // Main daemon loop
+    // Main daemon loop with unified event distribution
     loop {
         tokio::select! {
             _ = sigterm.recv() => {
@@ -76,6 +78,20 @@ async fn run_daemon_loop(
             _ = shutdown.notified() => {
                 info!("Received shutdown request via IPC, shutting down...");
                 break;
+            }
+            event_result = event_rx.recv() => {
+                match event_result {
+                    Some(event) => {
+                        // Distribute event to all plugins
+                        let mut pm = plugin_manager.lock().await;
+                        pm.distribute_event(&event, &niri).await;
+                    }
+                    None => {
+                        // Channel closed, event listener stopped
+                        warn!("Event channel closed, stopping daemon");
+                        break;
+                    }
+                }
             }
             stream_result = ipc_server.accept() => {
                 match stream_result {
@@ -139,9 +155,18 @@ async fn run_daemon(mut handler: CommandHandler) -> Result<()> {
     let config = handler.config().clone();
     let niri = handler.niri().clone();
     let mut plugin_manager = PluginManager::new();
-    if let Err(e) = plugin_manager.init(niri, &config).await {
+    if let Err(e) = plugin_manager.init(niri.clone(), &config).await {
         warn!("Failed to initialize plugins: {}", e);
     }
+
+    // Start unified event listener
+    let event_rx = match plugin_manager.start_event_listener(niri.clone()).await {
+        Ok(rx) => rx,
+        Err(e) => {
+            warn!("Failed to start event listener: {}", e);
+            return Err(anyhow::anyhow!("Failed to start event listener: {}", e));
+        }
+    };
 
     // Share plugin manager with handler
     let plugin_manager = Arc::new(Mutex::new(plugin_manager));
@@ -170,7 +195,7 @@ async fn run_daemon(mut handler: CommandHandler) -> Result<()> {
     set_process_name("piri");
 
     eprintln!("[DAEMON] run_daemon: About to enter run_daemon_loop");
-    let result = run_daemon_loop(ipc_server, handler, plugin_manager).await;
+    let result = run_daemon_loop(ipc_server, handler, plugin_manager, event_rx, niri).await;
     eprintln!(
         "[DAEMON] run_daemon: run_daemon_loop returned: {:?}",
         result

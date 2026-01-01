@@ -877,7 +877,7 @@ impl crate::plugins::Plugin for ScratchpadsPlugin {
         Ok(())
     }
 
-    async fn update_config(&mut self, niri: NiriIpc, config: &Config) -> Result<()> {
+    async fn update_config(&mut self, _niri: NiriIpc, config: &Config) -> Result<()> {
         info!("Updating scratchpads plugin configuration");
 
         let old_count = self.config.scratchpads.len();

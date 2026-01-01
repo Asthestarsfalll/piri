@@ -11,21 +11,60 @@
    use crate::plugins::Plugin;
    use crate::config::Config;
    use crate::niri::NiriIpc;
+   use niri_ipc::Event;
    
    pub struct MyPlugin {
+       niri: NiriIpc,
        // 插件状态
    }
    
    #[async_trait]
    impl Plugin for MyPlugin {
        fn name(&self) -> &str { "myplugin" }
-       async fn init(&mut self, niri: NiriIpc, config: &Config) -> Result<()> { /* ... */ }
-       async fn run(&mut self) -> Result<()> { /* ... */ }
+       
+       async fn init(&mut self, niri: NiriIpc, config: &Config) -> Result<()> {
+           self.niri = niri;
+           // 初始化插件
+           Ok(())
+       }
+       
+       async fn run(&mut self) -> Result<()> {
+           // 定期运行的任务（如果需要）
+           Ok(())
+       }
+       
+       // 处理 niri 事件（可选，仅事件驱动插件需要）
+       async fn handle_event(&mut self, event: &Event, niri: &NiriIpc) -> Result<()> {
+           match event {
+               Event::WindowOpenedOrChanged { window } => {
+                   // 处理窗口打开或改变事件
+               }
+               _ => {
+                   // 忽略其他事件
+               }
+           }
+           Ok(())
+       }
+       
+       // 声明插件感兴趣的事件类型（用于事件过滤）
+       fn is_interested_in_event(&self, event: &Event) -> bool {
+           matches!(event, Event::WindowOpenedOrChanged { .. })
+       }
    }
    ```
 3. 在 `src/plugins/mod.rs` 中注册插件
 4. 在 `src/config.rs` 中添加插件配置结构
 5. 更新配置文件示例
+
+#### 事件驱动插件
+
+如果你需要创建一个基于事件的插件（例如监听窗口事件、工作区切换等），只需实现 `handle_event` 方法。**无需创建自己的事件监听循环**，因为 Piri 使用统一的事件分发机制：
+
+- 所有事件由 `PluginManager` 统一监听
+- 事件通过 `handle_event` 方法分发给各个插件
+- 插件只需关注自己感兴趣的事件类型
+
+这大大简化了插件开发，并确保了高效的资源使用。
 
 ### 添加新的子命令
 

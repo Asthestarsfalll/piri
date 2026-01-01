@@ -1,58 +1,21 @@
 use anyhow::{Context, Result};
 use log::{debug, info, warn};
 use niri_ipc::{Action, Event, Reply, Request};
-use tokio::time::Duration;
 
 use crate::niri::NiriIpc;
 pub struct AutofillPlugin {
     niri: NiriIpc,
-    /// Event listener task handle
-    event_listener_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl AutofillPlugin {
     pub fn new() -> Self {
         Self {
             niri: NiriIpc::new(None).expect("Failed to initialize niri IPC"),
-            event_listener_handle: None,
-        }
-    }
-
-    /// Event listener loop that listens to niri events
-    async fn event_listener_loop(niri: NiriIpc) -> Result<()> {
-        info!("Autofill plugin event listener started");
-
-        // Outer loop: reconnect on connection failure
-        loop {
-            let socket = match niri.create_event_stream_socket() {
-                Ok(s) => s,
-                Err(e) => {
-                    warn!("Failed to create event stream: {}, retrying in 1s", e);
-                    tokio::time::sleep(Duration::from_millis(1000)).await;
-                    continue;
-                }
-            };
-
-            let mut read_event = socket.read_events();
-            info!("Event stream connected, waiting for events...");
-
-            while let Ok(event) = read_event() {
-                debug!("Raw event received: {:?}", event);
-                if let Err(e) = Self::handle_event(event, &niri).await {
-                    warn!("Error handling event: {}", e);
-                }
-            }
-
-            // Connection closed or error - will reconnect in outer loop
-            warn!("Event stream closed, reconnecting...");
-
-            // Reconnect after error
-            tokio::time::sleep(Duration::from_millis(1000)).await;
         }
     }
 
     /// Handle a single event - all events trigger the same alignment check
-    async fn handle_event(event: Event, niri: &NiriIpc) -> Result<()> {
+    async fn handle_event_internal(&self, event: &Event, niri: &NiriIpc) -> Result<()> {
         match event {
             Event::WindowClosed { .. } => {
                 debug!("Received WindowClosed event, triggering alignment check");
@@ -167,21 +130,9 @@ impl crate::plugins::Plugin for AutofillPlugin {
     }
 
     async fn init(&mut self, niri: NiriIpc, _config: &crate::config::Config) -> Result<()> {
-        self.niri = niri.clone();
-
+        self.niri = niri;
         info!("Autofill plugin initialized");
-
-        // Start event listener task
-        let niri_clone = niri.clone();
-
-        let handle = tokio::spawn(async move {
-            if let Err(e) = Self::event_listener_loop(niri_clone).await {
-                log::error!("Autofill plugin event listener error: {}", e);
-            }
-        });
-
-        self.event_listener_handle = Some(handle);
-
+        // Event listener is now handled by PluginManager
         Ok(())
     }
 
@@ -192,10 +143,19 @@ impl crate::plugins::Plugin for AutofillPlugin {
     }
 
     async fn shutdown(&mut self) -> Result<()> {
-        // Shutdown is handled by runtime - when runtime shuts down, all tasks are cancelled
-        // No need for plugin-specific shutdown logic
-        info!("Autofill plugin shutdown (handled by runtime)");
+        info!("Autofill plugin shutdown");
         Ok(())
+    }
+
+    async fn handle_event(&mut self, event: &Event, niri: &NiriIpc) -> Result<()> {
+        self.handle_event_internal(event, niri).await
+    }
+
+    fn is_interested_in_event(&self, event: &Event) -> bool {
+        matches!(
+            event,
+            Event::WindowClosed { .. } | Event::WindowLayoutsChanged { .. }
+        )
     }
 
     async fn update_config(
@@ -204,7 +164,7 @@ impl crate::plugins::Plugin for AutofillPlugin {
         _config: &crate::config::Config,
     ) -> Result<()> {
         info!("Updating autofill plugin configuration");
-        self.niri = niri.clone();
+        self.niri = niri;
         Ok(())
     }
 }

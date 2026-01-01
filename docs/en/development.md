@@ -11,21 +11,60 @@
    use crate::plugins::Plugin;
    use crate::config::Config;
    use crate::niri::NiriIpc;
+   use niri_ipc::Event;
    
    pub struct MyPlugin {
+       niri: NiriIpc,
        // Plugin state
    }
    
    #[async_trait]
    impl Plugin for MyPlugin {
        fn name(&self) -> &str { "myplugin" }
-       async fn init(&mut self, niri: NiriIpc, config: &Config) -> Result<()> { /* ... */ }
-       async fn run(&mut self) -> Result<()> { /* ... */ }
+       
+       async fn init(&mut self, niri: NiriIpc, config: &Config) -> Result<()> {
+           self.niri = niri;
+           // Initialize plugin
+           Ok(())
+       }
+       
+       async fn run(&mut self) -> Result<()> {
+           // Periodic tasks (if needed)
+           Ok(())
+       }
+       
+       // Handle niri events (optional, only for event-driven plugins)
+       async fn handle_event(&mut self, event: &Event, niri: &NiriIpc) -> Result<()> {
+           match event {
+               Event::WindowOpenedOrChanged { window } => {
+                   // Handle window opened or changed event
+               }
+               _ => {
+                   // Ignore other events
+               }
+           }
+           Ok(())
+       }
+       
+       // Declare which event types the plugin is interested in (for event filtering)
+       fn is_interested_in_event(&self, event: &Event) -> bool {
+           matches!(event, Event::WindowOpenedOrChanged { .. })
+       }
    }
    ```
 3. Register the plugin in `src/plugins/mod.rs`
 4. Add plugin configuration structure in `src/config.rs`
 5. Update the configuration file example
+
+#### Event-Driven Plugins
+
+If you need to create an event-based plugin (e.g., listening to window events, workspace switches, etc.), simply implement the `handle_event` method. **You don't need to create your own event listener loop** because Piri uses a unified event distribution mechanism:
+
+- All events are listened to by `PluginManager` in a unified way
+- Events are distributed to plugins via the `handle_event` method
+- Plugins only need to focus on event types they're interested in
+
+This greatly simplifies plugin development and ensures efficient resource usage.
 
 ### Adding New Subcommands
 

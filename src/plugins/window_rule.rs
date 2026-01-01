@@ -14,8 +14,6 @@ pub struct WindowRulePlugin {
     niri: NiriIpc,
     /// Shared config that can be updated without restarting the event listener
     config: Arc<Mutex<WindowRulePluginConfig>>,
-    /// Event listener task handle
-    event_listener_handle: Option<tokio::task::JoinHandle<()>>,
     /// Compiled regex patterns cache
     regex_cache: Arc<Mutex<HashMap<String, Regex>>>,
 }
@@ -25,7 +23,6 @@ impl WindowRulePlugin {
         Self {
             niri: NiriIpc::new(None).expect("Failed to initialize niri IPC"),
             config: Arc::new(Mutex::new(WindowRulePluginConfig::default())),
-            event_listener_handle: None,
             regex_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -169,50 +166,8 @@ impl WindowRulePlugin {
         Ok(false)
     }
 
-    /// Event listener loop that listens to niri events
-    async fn event_listener_loop(
-        niri: NiriIpc,
-        config: Arc<Mutex<WindowRulePluginConfig>>,
-        regex_cache: Arc<Mutex<HashMap<String, Regex>>>,
-    ) -> Result<()> {
-        info!("Window rule plugin event listener started");
-
-        // Outer loop: reconnect on connection failure
-        loop {
-            let socket = match niri.create_event_stream_socket() {
-                Ok(s) => s,
-                Err(e) => {
-                    warn!("Failed to create event stream: {}, retrying in 1s", e);
-                    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-                    continue;
-                }
-            };
-
-            let mut read_event = socket.read_events();
-            info!("Event stream connected, waiting for events...");
-
-            while let Ok(event) = read_event() {
-                debug!("Raw event received: {:?}", event);
-                if let Err(e) = Self::handle_event(event, &niri, &config, &regex_cache).await {
-                    warn!("Error handling event: {}", e);
-                }
-            }
-
-            // Connection closed or error - will reconnect in outer loop
-            warn!("Event stream closed, reconnecting...");
-
-            // Reconnect after error
-            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-        }
-    }
-
-    /// Handle a single event
-    async fn handle_event(
-        event: Event,
-        niri: &NiriIpc,
-        config: &Arc<Mutex<WindowRulePluginConfig>>,
-        regex_cache: &Arc<Mutex<HashMap<String, Regex>>>,
-    ) -> Result<()> {
+    /// Handle a single event (internal implementation)
+    async fn handle_event_internal(&self, event: &Event, niri: &NiriIpc) -> Result<()> {
         match event {
             Event::WindowOpenedOrChanged { window } => {
                 debug!(
@@ -220,13 +175,13 @@ impl WindowRulePlugin {
                     window.id, window.app_id, window.title
                 );
 
-                let config_guard = config.lock().await;
+                let config_guard = self.config.lock().await;
                 let rules = config_guard.rules.clone();
                 drop(config_guard);
 
                 // Check each rule
                 for rule in &rules {
-                    match Self::matches_rule(&window, rule, regex_cache).await {
+                    match Self::matches_rule(&window, rule, &self.regex_cache).await {
                         Ok(true) => {
                             info!(
                                 "Window {} matched rule: app_id={:?}, title={:?}, workspace={}",
@@ -296,7 +251,8 @@ impl crate::plugins::Plugin for WindowRulePlugin {
     }
 
     async fn init(&mut self, niri: NiriIpc, config: &crate::config::Config) -> Result<()> {
-        self.niri = niri.clone();
+        // Store niri instance first, then clone from self for the async task
+        self.niri = niri;
 
         // Get window rule plugin config
         if let Some(window_rule_config) = config.get_window_rule_plugin_config() {
@@ -325,21 +281,7 @@ impl crate::plugins::Plugin for WindowRulePlugin {
         }
         drop(config_guard);
 
-        // Start event listener task
-        let niri_clone = niri.clone();
-        let config_clone = self.config.clone();
-        let regex_cache_clone = self.regex_cache.clone();
-
-        let handle = tokio::spawn(async move {
-            if let Err(e) =
-                Self::event_listener_loop(niri_clone, config_clone, regex_cache_clone).await
-            {
-                log::error!("Window rule plugin event listener error: {}", e);
-            }
-        });
-
-        self.event_listener_handle = Some(handle);
-
+        // Event listener is now handled by PluginManager
         Ok(())
     }
 
@@ -350,17 +292,23 @@ impl crate::plugins::Plugin for WindowRulePlugin {
     }
 
     async fn shutdown(&mut self) -> Result<()> {
-        // Shutdown is handled by runtime - when runtime shuts down, all tasks are cancelled
-        // No need for plugin-specific shutdown logic
-        info!("Window rule plugin shutdown (handled by runtime)");
+        info!("Window rule plugin shutdown");
         Ok(())
+    }
+
+    async fn handle_event(&mut self, event: &Event, niri: &NiriIpc) -> Result<()> {
+        self.handle_event_internal(event, niri).await
+    }
+
+    fn is_interested_in_event(&self, event: &Event) -> bool {
+        matches!(event, Event::WindowOpenedOrChanged { .. })
     }
 
     async fn update_config(&mut self, niri: NiriIpc, config: &crate::config::Config) -> Result<()> {
         info!("Updating window rule plugin configuration");
 
         // Update niri instance
-        self.niri = niri.clone();
+        self.niri = niri;
 
         // Get new window rule plugin config
         let mut config_guard = self.config.lock().await;
