@@ -20,6 +20,7 @@
 - 🔌 **Empty**: 在切换到空 workspace 时自动执行命令，用于自动化工作流程（详见 [Empty 文档](docs/zh/plugins/empty.md)）
 - 🎯 **Window Rule**: 根据窗口的 `app_id` 或 `title` 自动将窗口移动到指定 workspace（详见 [Window Rule 文档](docs/zh/plugins/window_rule.md)）
 - 🔄 **Autofill**: 在窗口关闭或布局改变时自动将最后一列窗口对齐到最右侧位置（详见 [Autofill 文档](docs/zh/plugins/autofill.md)）
+- 🔒 **Singleton**: 管理单例窗口，确保应用程序只有一个实例运行（详见 [Singleton 文档](docs/zh/plugins/singleton.md)）
 
 ## 快速开始
 
@@ -216,6 +217,37 @@ autofill = true
 - 自动保持整洁的窗口布局
 
 详细说明请参考 [Autofill 文档](docs/zh/plugins/autofill.md)。
+
+### Singleton
+
+管理单例窗口——只应该有一个实例的窗口。切换单例时，如果窗口已存在则聚焦，否则启动应用程序。
+
+**配置示例**：
+```toml
+[piri.plugins]
+singleton = true
+
+[singleton.browser]
+command = "google-chrome-stable"
+
+[singleton.term]
+command = "GTK_IM_MODULE=wayland ghostty --class=singleton.term"
+app_id = "singleton.term"
+```
+
+**快速使用**：
+```bash
+# 切换单例窗口（如果存在则聚焦，不存在则启动）
+piri singleton {name} toggle
+```
+
+**特性**：
+- 智能窗口检测，自动检测现有窗口
+- 自动 App ID 提取，无需手动指定
+- 窗口注册表，快速查找已存在的窗口
+- 自动聚焦现有窗口，避免重复实例
+
+详细说明请参考 [Singleton 文档](docs/zh/plugins/singleton.md)。
 
 ## 文档
 

@@ -2,12 +2,12 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use log::{debug, info, warn};
 use std::collections::HashMap;
-use std::process::{Command, Stdio};
 use tokio::time::{sleep, Duration};
 
 use crate::config::{Config, ScratchpadConfig};
 use crate::ipc::IpcRequest;
 use crate::niri::NiriIpc;
+use crate::plugins::window_utils;
 
 /// Manages scratchpad windows
 struct ScratchpadManager {
@@ -42,8 +42,7 @@ impl ScratchpadManager {
         F: FnOnce(NiriIpc) -> Result<T> + Send + 'static,
         T: Send + 'static,
     {
-        let niri = self.niri.clone();
-        tokio::task::spawn_blocking(move || f(niri)).await.context("Task join error")?
+        window_utils::run_blocking(self.niri.clone(), f).await
     }
 
     /// Check if a window is in the current workspace
@@ -70,7 +69,7 @@ impl ScratchpadManager {
 
     /// Focus a window (helper function)
     async fn focus_window(&self, window_id: u64) -> Result<()> {
-        self.run_blocking(move |niri| niri.focus_window(window_id)).await
+        window_utils::focus_window(self.niri.clone(), window_id).await
     }
 
     /// Toggle scratchpad visibility
@@ -139,60 +138,30 @@ impl ScratchpadManager {
         // Launch application
         info!("Launching application for scratchpad {}", name);
         info!("Looking for window matching pattern: {}", window_match);
-        self.launch_application(config).await?;
+        window_utils::launch_application(&config.command).await?;
 
         // Wait for window to appear
-        let mut attempts = 0;
-        let max_attempts = 50; // 5 seconds with 100ms intervals
+        let window = window_utils::wait_for_window(
+            self.niri.clone(),
+            &window_match,
+            &format!("scratchpad {}", name),
+            50, // max_attempts: 5 seconds with 100ms intervals
+        )
+        .await?;
 
-        loop {
-            sleep(Duration::from_millis(100)).await;
-            attempts += 1;
-
-            if let Some(window) = self.niri.find_window_async(&window_match).await? {
-                info!("Window appeared for scratchpad {} (ID: {}, app_id: {:?}, class: {:?}, title: {})",
-                      name, window.id, window.app_id, window.class, window.title);
-                self.register_scratchpad(name.to_string(), window.id, config).await?;
-                // Toggle to show on first launch (will change visibility from false to true)
-                self.toggle_window_visibility(window.id, name, config).await?;
-                return Ok(());
-            }
-
-            // Log available windows every 10 attempts (every second) for debugging
-            if attempts % 10 == 0 {
-                debug!(
-                    "Still waiting for window (attempt {}/{})...",
-                    attempts, max_attempts
-                );
-                if let Ok(windows) = self.run_blocking(|niri| niri.get_windows()).await {
-                    debug!("Available windows: {}", windows.len());
-                    for window in windows.iter().take(5) {
-                        debug!(
-                            "  - ID: {}, app_id: {:?}, class: {:?}, title: {}",
-                            window.id, window.app_id, window.class, window.title
-                        );
-                    }
-                }
-            }
-
-            if attempts >= max_attempts {
-                // Before bailing, list all available windows for debugging
-                warn!(
-                    "Timeout waiting for window matching '{}' for scratchpad {}",
-                    window_match, name
-                );
-                if let Ok(windows) = self.run_blocking(|niri| niri.get_windows()).await {
-                    warn!("Available windows at timeout ({} total):", windows.len());
-                    for window in windows.iter() {
-                        warn!(
-                            "  - ID: {}, app_id: {:?}, class: {:?}, title: {}",
-                            window.id, window.app_id, window.class, window.title
-                        );
-                    }
-                }
-                anyhow::bail!("Timeout waiting for window to appear for scratchpad {} (searched for pattern: '{}')", name, window_match);
-            }
+        if let Some(window) = window {
+            info!(
+                "Window appeared for scratchpad {} (ID: {}, app_id: {:?}, class: {:?}, title: {})",
+                name, window.id, window.app_id, window.class, window.title
+            );
+            self.register_scratchpad(name.to_string(), window.id, config).await?;
+            // Toggle to show on first launch (will change visibility from false to true)
+            self.toggle_window_visibility(window.id, name, config).await?;
+            return Ok(());
         }
+
+        // This should not be reached as wait_for_window will error on timeout
+        Ok(())
     }
 
     async fn register_scratchpad(
@@ -728,23 +697,6 @@ impl ScratchpadManager {
                 (x, y)
             }
         }
-    }
-
-    async fn launch_application(&self, config: &ScratchpadConfig) -> Result<()> {
-        debug!("Launching: {}", config.command);
-
-        // Parse command - it may contain environment variables and arguments
-        // Use shell to execute the full command
-        Command::new("sh")
-            .arg("-c")
-            .arg(&config.command)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .with_context(|| format!("Failed to launch application: {}", config.command))?;
-
-        Ok(())
     }
 
     /// Get config for a scratchpad (from dynamic configs or provided config)

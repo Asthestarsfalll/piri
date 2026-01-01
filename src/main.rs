@@ -43,6 +43,14 @@ enum Commands {
         #[command(subcommand)]
         action: ScratchpadAction,
     },
+    /// Singleton management
+    Singleton {
+        /// Singleton name
+        name: String,
+        /// Action to perform
+        #[command(subcommand)]
+        action: SingletonAction,
+    },
     /// Reload configuration
     Reload,
     /// Stop the daemon
@@ -64,6 +72,12 @@ enum ScratchpadAction {
         /// Direction from which the scratchpad appears (e.g., "fromTop", "fromBottom", "fromLeft", "fromRight")
         direction: String,
     },
+}
+
+#[derive(Subcommand)]
+enum SingletonAction {
+    /// Toggle singleton (focus if exists, launch if not)
+    Toggle,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -201,6 +215,31 @@ async fn async_main() -> Result<()> {
                         }
                         IpcResponse::Error(e) => {
                             anyhow::bail!("Failed to add scratchpad: {}", e);
+                        }
+                        _ => {
+                            anyhow::bail!("Unexpected response from daemon");
+                        }
+                    }
+                }
+            }
+        }
+        Commands::Singleton { name, action } => {
+            // Send command to daemon via IPC
+            use crate::ipc::{IpcClient, IpcRequest, IpcResponse};
+
+            let client = IpcClient::new(None);
+
+            match action {
+                SingletonAction::Toggle => {
+                    let response = client
+                        .send_request(IpcRequest::SingletonToggle { name: name.clone() })
+                        .await?;
+                    match response {
+                        IpcResponse::Success => {
+                            info!("Singleton '{}' toggled", name);
+                        }
+                        IpcResponse::Error(e) => {
+                            anyhow::bail!("Failed to toggle singleton: {}", e);
                         }
                         _ => {
                             anyhow::bail!("Unexpected response from daemon");

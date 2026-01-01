@@ -505,17 +505,33 @@ impl NiriIpc {
     }
 
     /// Find window by class, title, or app_id
-    /// Uses exact match for app_id, partial match for class and title
+    /// Uses exact match first for app_id, then partial match for app_id, class and title
     pub fn find_window(&self, pattern: &str) -> Result<Option<Window>> {
         let windows = self.get_windows()?;
 
-        for window in windows {
-            // Exact match for app_id (most reliable)
+        // First pass: exact match for app_id (most reliable)
+        for window in &windows {
             if let Some(ref app_id) = window.app_id {
                 if app_id == pattern {
-                    return Ok(Some(window));
+                    return Ok(Some(window.clone()));
                 }
             }
+        }
+
+        // Second pass: partial match for app_id (pattern starts with app_id or vice versa)
+        // This handles cases like "google-chrome-stable" (pattern) matching "google-chrome" (app_id)
+        for window in &windows {
+            if let Some(ref app_id) = window.app_id {
+                // Check if pattern starts with app_id (e.g., "google-chrome-stable" starts with "google-chrome")
+                // or app_id starts with pattern (e.g., "google-chrome" starts with "google")
+                if pattern.starts_with(app_id) || app_id.starts_with(pattern) {
+                    return Ok(Some(window.clone()));
+                }
+            }
+        }
+
+        // Third pass: partial match for class and title
+        for window in windows {
             // Partial match for class
             if let Some(ref class) = window.class {
                 if class.contains(pattern) {

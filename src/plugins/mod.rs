@@ -1,7 +1,9 @@
 pub mod autofill;
 pub mod empty;
 pub mod scratchpads;
+pub mod singleton;
 pub mod window_rule;
+pub mod window_utils;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -219,6 +221,16 @@ impl PluginManager {
             "autofill",
             config.is_autofill_enabled(),
             || autofill::AutofillPlugin::new(),
+            niri.clone(),
+            config,
+        )
+        .await?;
+
+        // Initialize or update singleton plugin
+        self.init_plugin(
+            "singleton",
+            config.is_singleton_enabled(),
+            || singleton::SingletonPlugin::new(),
             niri.clone(),
             config,
         )

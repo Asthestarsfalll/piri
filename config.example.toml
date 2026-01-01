@@ -13,6 +13,7 @@ scratchpads = true
 empty = true
 window_rule = true
 autofill = true
+singleton = true
 
 [piri.scratchpad]
 default_size = "40% 60%"
@@ -64,3 +65,10 @@ open_on_workspace = "3"
 app_id = "code"
 title = ".*VS Code.*"
 open_on_workspace = "browser"
+
+[singleton.browser]
+command = 'google-chrome-stable'
+
+[singleton.term]
+command = 'GTK_IM_MODULE=wayland ghostty --class=singleton.term'
+app_id = 'singleton.term'

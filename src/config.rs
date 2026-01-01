@@ -15,6 +15,8 @@ pub struct Config {
     pub scratchpads: HashMap<String, ScratchpadConfig>,
     #[serde(flatten)]
     pub empty: HashMap<String, EmptyWorkspaceConfig>,
+    #[serde(flatten)]
+    pub singleton: HashMap<String, SingletonConfig>,
     #[serde(default)]
     pub window_rule: Vec<WindowRuleConfig>,
 }
@@ -62,6 +64,9 @@ pub struct PluginsConfig {
     /// Enable/disable autofill plugin (default: false)
     #[serde(default)]
     pub autofill: Option<bool>,
+    /// Enable/disable singleton plugin (default: true if singleton configs are configured)
+    #[serde(default)]
+    pub singleton: Option<bool>,
     /// Empty plugin configuration (for backward compatibility)
     #[serde(rename = "empty_config", default)]
     pub empty_config: Option<EmptyPluginConfig>,
@@ -74,6 +79,7 @@ impl Default for PluginsConfig {
             empty: None,
             window_rule: None,
             autofill: None,
+            singleton: None,
             empty_config: None,
         }
     }
@@ -83,6 +89,14 @@ impl Default for PluginsConfig {
 pub struct EmptyWorkspaceConfig {
     /// Command to execute when switching to this empty workspace
     pub command: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SingletonConfig {
+    /// Command to execute the application (can include environment variables and arguments)
+    pub command: String,
+    /// Optional app_id pattern to match windows (if not specified, extracted from command)
+    pub app_id: Option<String>,
 }
 
 /// Window rule configuration
@@ -220,6 +234,7 @@ impl Config {
             piri: PiriConfig::default(),
             scratchpads: HashMap::new(),
             empty: HashMap::new(),
+            singleton: HashMap::new(),
             window_rule: Vec::new(),
         };
 
@@ -293,6 +308,11 @@ impl Config {
                                 config.piri.plugins.autofill = Some(enabled);
                             }
                         }
+                        if let Some(singleton_enabled) = plugins_map.get("singleton") {
+                            if let Some(enabled) = singleton_enabled.as_bool() {
+                                config.piri.plugins.singleton = Some(enabled);
+                            }
+                        }
                     }
                 }
             }
@@ -344,6 +364,50 @@ impl Config {
                         }
                     }
                 }
+            }
+        }
+
+        // Extract singleton configs (format: [singleton.{name}])
+        // In TOML, [singleton.browser] creates a nested structure: { "singleton": { "browser": { ... } } }
+        if let Some(singleton_table) = doc.get("singleton") {
+            if let Some(singleton_map) = singleton_table.as_table() {
+                for (name, value) in singleton_map.iter() {
+                    if let Some(singleton_table) = value.as_table() {
+                        let mut singleton_config = SingletonConfig {
+                            command: String::new(),
+                            app_id: None,
+                        };
+
+                        if let Some(command_value) = singleton_table.get("command") {
+                            if let Some(cmd_str) = command_value.as_str() {
+                                singleton_config.command = cmd_str.to_string();
+                            } else {
+                                warn!("singleton.{}: command must be a string", name);
+                                continue;
+                            }
+                        } else {
+                            warn!("singleton.{}: missing required field 'command'", name);
+                            continue;
+                        }
+
+                        if let Some(app_id_value) = singleton_table.get("app_id") {
+                            if let Some(app_id_str) = app_id_value.as_str() {
+                                singleton_config.app_id = Some(app_id_str.to_string());
+                            } else {
+                                warn!("singleton.{}: app_id must be a string", name);
+                            }
+                        }
+
+                        config.singleton.insert(name.clone(), singleton_config);
+                        log::debug!(
+                            "Parsed singleton config: {} -> command: {}, app_id: {:?}",
+                            name,
+                            config.singleton[&name.clone()].command,
+                            config.singleton[&name.clone()].app_id
+                        );
+                    }
+                }
+                log::info!("Parsed {} singleton configurations", config.singleton.len());
             }
         }
 
@@ -423,6 +487,7 @@ impl Default for Config {
             piri: PiriConfig::default(),
             scratchpads: HashMap::new(),
             empty: HashMap::new(),
+            singleton: HashMap::new(),
             window_rule: Vec::new(),
         }
     }
@@ -493,6 +558,18 @@ impl Config {
         // If explicitly set, use that value
         // Otherwise, default to false (disabled)
         self.piri.plugins.autofill.unwrap_or(false)
+    }
+
+    /// Get singleton config by name
+    pub fn get_singleton(&self, name: &str) -> Option<&SingletonConfig> {
+        self.singleton.get(name)
+    }
+
+    /// Check if singleton plugin should be enabled
+    pub fn is_singleton_enabled(&self) -> bool {
+        // If explicitly set, use that value
+        // Otherwise, default to true if singleton configs are configured
+        self.piri.plugins.singleton.unwrap_or(!self.singleton.is_empty())
     }
 }
 

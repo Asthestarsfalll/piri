@@ -9,6 +9,7 @@ use tokio::net::{UnixListener, UnixStream};
 pub enum IpcRequest {
     ScratchpadToggle { name: String },
     ScratchpadAdd { name: String, direction: String },
+    SingletonToggle { name: String },
     Reload,
     Ping,
     Shutdown,
@@ -254,9 +255,23 @@ pub async fn handle_request(
                     }
                     IpcResponse::Success
                 }
-                _ => {
-                    // Should not reach here if plugins handle all scratchpad requests
-                    IpcResponse::Error("Request not handled".to_string())
+                IpcRequest::ScratchpadToggle { .. } | IpcRequest::ScratchpadAdd { .. } => {
+                    // Check if scratchpads plugin should be enabled but isn't
+                    let config = handler.config();
+                    if config.is_scratchpads_enabled() {
+                        IpcResponse::Error("Scratchpads plugin is enabled but not initialized. Please restart the daemon.".to_string())
+                    } else {
+                        IpcResponse::Error("Scratchpads plugin is not enabled. Please enable it in the configuration file (piri.plugins.scratchpads = true).".to_string())
+                    }
+                }
+                IpcRequest::SingletonToggle { name } => {
+                    // Check if singleton plugin should be enabled but isn't
+                    let config = handler.config();
+                    if config.is_singleton_enabled() {
+                        IpcResponse::Error(format!("Singleton plugin is enabled but not initialized. Please restart the daemon."))
+                    } else {
+                        IpcResponse::Error(format!("Singleton plugin is not enabled. Please enable it in the configuration file (piri.plugins.singleton = true)."))
+                    }
                 }
             }
         }

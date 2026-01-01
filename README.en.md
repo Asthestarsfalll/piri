@@ -20,6 +20,7 @@ Contributions, suggestions, bug reports and comments are welcome.
 - 🔌 **Empty**: Automatically execute commands when switching to empty workspaces, useful for automating workflows (see [Empty documentation](docs/en/plugins/empty.md) for details)
 - 🎯 **Window Rule**: Automatically move windows to specified workspaces based on `app_id` or `title` (see [Window Rule documentation](docs/en/plugins/window_rule.md) for details)
 - 🔄 **Autofill**: Automatically aligns the last column of windows to the rightmost position when windows are closed (see [Autofill documentation](docs/en/plugins/autofill.md) for details)
+- 🔒 **Singleton**: Manages singleton windows, ensuring applications have only one instance running (see [Singleton documentation](docs/en/plugins/singleton.md) for details)
 
 ## Quick Start
 
@@ -216,6 +217,37 @@ autofill = true
 - Automatically maintains clean window layouts
 
 For detailed documentation, please refer to the [Autofill documentation](docs/en/plugins/autofill.md).
+
+### Singleton
+
+Manages singleton windows - windows that should only have one instance. When toggling a singleton, if the window exists, it focuses it; otherwise, it launches the application.
+
+**Configuration Example**:
+```toml
+[piri.plugins]
+singleton = true
+
+[singleton.browser]
+command = "google-chrome-stable"
+
+[singleton.term]
+command = "GTK_IM_MODULE=wayland ghostty --class=singleton.term"
+app_id = "singleton.term"
+```
+
+**Quick Usage**:
+```bash
+# Toggle singleton (focus if exists, launch if not)
+piri singleton {name} toggle
+```
+
+**Features**:
+- Smart window detection, automatically detects existing windows
+- Automatic App ID extraction, no manual specification needed
+- Window registry for fast lookup of existing windows
+- Automatically focuses existing windows, prevents duplicate instances
+
+For detailed documentation, please refer to the [Singleton documentation](docs/en/plugins/singleton.md).
 
 ## Documentation
 
