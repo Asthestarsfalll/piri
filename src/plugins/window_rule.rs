@@ -1,21 +1,20 @@
 use anyhow::{Context, Result};
 use log::{debug, info, warn};
 use niri_ipc::Event;
-use regex::Regex;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::config::{WindowRuleConfig, WindowRulePluginConfig};
 use crate::niri::NiriIpc;
+use crate::plugins::window_utils::{self, WindowMatcher, WindowMatcherCache};
 
 /// Window rule plugin that moves windows to workspaces based on app_id and title matching
 pub struct WindowRulePlugin {
     niri: NiriIpc,
     /// Shared config that can be updated without restarting the event listener
     config: Arc<Mutex<WindowRulePluginConfig>>,
-    /// Compiled regex patterns cache
-    regex_cache: Arc<Mutex<HashMap<String, Regex>>>,
+    /// Window matcher cache for regex pattern matching
+    matcher_cache: Arc<WindowMatcherCache>,
 }
 
 impl WindowRulePlugin {
@@ -23,152 +22,85 @@ impl WindowRulePlugin {
         Self {
             niri: NiriIpc::new(None).expect("Failed to initialize niri IPC"),
             config: Arc::new(Mutex::new(WindowRulePluginConfig::default())),
-            regex_cache: Arc::new(Mutex::new(HashMap::new())),
+            matcher_cache: Arc::new(WindowMatcherCache::new()),
         }
     }
 
-    /// Get or compile a regex pattern (with caching)
-    async fn get_regex(
-        pattern: &str,
-        regex_cache: &Arc<Mutex<HashMap<String, Regex>>>,
-    ) -> Result<Regex> {
-        let mut cache = regex_cache.lock().await;
-        if let Some(regex) = cache.get(pattern) {
-            return Ok(regex.clone());
-        }
-
-        let regex = Regex::new(pattern)
-            .with_context(|| format!("Failed to compile regex pattern: {}", pattern))?;
-        cache.insert(pattern.to_string(), regex.clone());
-        Ok(regex)
-    }
-
-    /// Parse workspace identifier from config entry (same as empty plugin)
-    fn parse_workspace_identifier(workspace: &str) -> WorkspaceIdentifier {
-        if let Ok(idx) = workspace.parse::<u8>() {
-            WorkspaceIdentifier::Idx(idx)
+    /// Log window rules (helper to avoid code duplication)
+    fn log_rules(rules: &[WindowRuleConfig], prefix: &str) {
+        if !rules.is_empty() {
+            info!("{} window rules:", prefix);
+            for (i, rule) in rules.iter().enumerate() {
+                info!(
+                    "  Rule {}: app_id={:?}, title={:?}, workspace={:?}, focus_command={:?}",
+                    i + 1,
+                    rule.app_id,
+                    rule.title,
+                    rule.open_on_workspace,
+                    rule.focus_command
+                );
+            }
         } else {
-            WorkspaceIdentifier::Name(workspace.to_string())
+            warn!(
+                "Window rule plugin {} but no rules configured",
+                prefix.to_lowercase()
+            );
         }
     }
 
-    /// Match workspace by name and idx (same logic as empty plugin)
-    async fn match_workspace(target_workspace: &str, niri: &NiriIpc) -> Result<Option<String>> {
-        let niri_clone = niri.clone();
-        let workspaces_result =
-            tokio::task::spawn_blocking(move || niri_clone.get_workspaces_for_mapping()).await;
+    /// Handle focus command execution for currently focused window
+    async fn handle_focus_command(&self, niri: &NiriIpc) -> Result<()> {
+        let focused_window_id =
+            window_utils::run_blocking(niri.clone(), |niri| niri.get_focused_window_id())
+                .await?
+                .ok_or_else(|| {
+                    debug!("No focused window found");
+                    anyhow::anyhow!("No focused window")
+                })?;
 
-        let workspaces = match workspaces_result {
-            Ok(Ok(ws)) => ws,
-            Ok(Err(e)) => {
-                debug!("Failed to get workspaces: {}", e);
-                return Ok(None);
-            }
-            Err(e) => {
-                debug!("Task join error: {}", e);
-                return Ok(None);
-            }
-        };
+        let windows = window_utils::run_blocking(niri.clone(), |niri| niri.get_windows()).await?;
+        let window = windows.into_iter().find(|w| w.id == focused_window_id).ok_or_else(|| {
+            debug!("Focused window {} not found", focused_window_id);
+            anyhow::anyhow!("Focused window not found")
+        })?;
 
-        let target_identifier = Self::parse_workspace_identifier(target_workspace);
+        let config_guard = self.config.lock().await;
+        let rules = config_guard.rules.clone();
+        drop(config_guard);
 
-        // First pass: try name matching
-        for workspace in &workspaces {
-            let workspace_identifier: WorkspaceIdentifier = if let Some(ref name) = workspace.name {
-                WorkspaceIdentifier::Name(name.clone())
-            } else {
-                WorkspaceIdentifier::Idx(workspace.idx)
-            };
-
-            let matches = match (&target_identifier, &workspace_identifier) {
-                (WorkspaceIdentifier::Name(a), WorkspaceIdentifier::Name(b)) => a == b,
-                (WorkspaceIdentifier::Name(name), WorkspaceIdentifier::Idx(key_idx)) => {
-                    name == &key_idx.to_string()
-                }
-                (WorkspaceIdentifier::Idx(idx), WorkspaceIdentifier::Name(name)) => {
-                    name == &idx.to_string()
-                }
-                (WorkspaceIdentifier::Idx(a), WorkspaceIdentifier::Idx(b)) => a == b,
-            };
-
-            if matches {
-                // Return workspace identifier for moving window
-                let workspace_key: String = if let Some(ref name) = workspace.name {
-                    name.clone()
-                } else {
-                    workspace.idx.to_string()
-                };
-                debug!(
-                    "Matched workspace by name: target={:?}, found={}",
-                    target_identifier, workspace_key
-                );
-                return Ok(Some(workspace_key));
-            }
-        }
-
-        // Second pass: try idx matching
-        for workspace in &workspaces {
-            let matches = match (&target_identifier, &workspace.idx) {
-                (WorkspaceIdentifier::Idx(a), b) => a == b,
-                _ => false,
-            };
-
-            if matches {
-                let workspace_key = workspace.idx.to_string();
-                debug!(
-                    "Matched workspace by idx: target={:?}, found={}",
-                    target_identifier, workspace_key
-                );
-                return Ok(Some(workspace_key));
-            }
-        }
-
-        debug!("No matching workspace found for: {:?}", target_identifier);
-        Ok(None)
-    }
-
-    /// Check if a window matches a rule
-    async fn matches_rule(
-        window: &niri_ipc::Window,
-        rule: &WindowRuleConfig,
-        regex_cache: &Arc<Mutex<HashMap<String, Regex>>>,
-    ) -> Result<bool> {
-        // Check app_id match (if specified)
-        if let Some(ref app_id_pattern) = rule.app_id {
-            if let Some(ref window_app_id) = window.app_id {
-                let regex = Self::get_regex(app_id_pattern, regex_cache).await?;
-                if regex.is_match(window_app_id) {
-                    debug!(
-                        "Window {} matched rule by app_id: {} matches {}",
-                        window.id, window_app_id, app_id_pattern
+        for rule in rules.iter() {
+            let matcher = WindowMatcher::new(rule.app_id.clone(), rule.title.clone());
+            if self
+                .matcher_cache
+                .matches(window.app_id.as_ref(), Some(&window.title), &matcher)
+                .await?
+            {
+                if let Some(ref focus_command) = rule.focus_command {
+                    info!(
+                        "Executing focus_command for window {}: {}",
+                        focused_window_id, focus_command
                     );
-                    return Ok(true);
+                    window_utils::execute_command(focus_command)?;
+                    return Ok(());
                 }
             }
         }
 
-        // Check title match (if specified)
-        if let Some(ref title_pattern) = rule.title {
-            if let Some(ref window_title) = window.title {
-                let regex = Self::get_regex(title_pattern, regex_cache).await?;
-                if regex.is_match(window_title) {
-                    debug!(
-                        "Window {} matched rule by title: {} matches {}",
-                        window.id, window_title, title_pattern
-                    );
-                    return Ok(true);
-                }
-            }
-        }
-
-        // If both app_id and title are specified, match if either matches (OR logic)
-        // If only one is specified, it must match
-        Ok(false)
+        Ok(())
     }
 
     /// Handle a single event (internal implementation)
     async fn handle_event_internal(&self, event: &Event, niri: &NiriIpc) -> Result<()> {
         match event {
+            Event::WindowFocusChanged { id } => {
+                debug!("Received WindowFocusChanged event: id={:?}", id);
+                if id.is_some() {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                    if let Err(e) = self.handle_focus_command(niri).await {
+                        warn!("Failed to handle focus_command: {}", e);
+                    }
+                }
+            }
             Event::WindowOpenedOrChanged { window } => {
                 debug!(
                     "Received WindowOpenedOrChanged event: id={}, app_id={:?}, title={:?}",
@@ -181,49 +113,122 @@ impl WindowRulePlugin {
 
                 // Check each rule
                 for rule in &rules {
-                    match Self::matches_rule(&window, rule, &self.regex_cache).await {
+                    let matcher = WindowMatcher::new(rule.app_id.clone(), rule.title.clone());
+                    match self
+                        .matcher_cache
+                        .matches(window.app_id.as_ref(), window.title.as_ref(), &matcher)
+                        .await
+                    {
                         Ok(true) => {
+                            debug!(
+                                "Window {} matched rule: app_id={:?}, title={:?}",
+                                window.id, rule.app_id, rule.title
+                            );
                             info!(
-                                "Window {} matched rule: app_id={:?}, title={:?}, workspace={}",
-                                window.id, rule.app_id, rule.title, rule.open_on_workspace
+                                "Window {} matched rule: workspace={:?}, focus_command={:?}",
+                                window.id, rule.open_on_workspace, rule.focus_command
                             );
 
-                            // Match workspace (name first, then idx)
-                            match Self::match_workspace(&rule.open_on_workspace, niri).await {
-                                Ok(Some(workspace)) => {
-                                    // Move window to workspace
-                                    let niri_clone = niri.clone();
-                                    let window_id = window.id;
-                                    let workspace_clone = workspace.clone();
-
-                                    tokio::task::spawn_blocking(move || {
-                                        niri_clone
-                                            .move_window_to_workspace(window_id, &workspace_clone)
-                                    })
+                            // Move window to workspace if open_on_workspace is specified
+                            if let Some(ref open_on_workspace) = rule.open_on_workspace {
+                                // Match workspace (exact name first, then exact idx)
+                                match window_utils::match_workspace(open_on_workspace, niri.clone())
                                     .await
-                                    .context("Task join error")?
-                                    .context("Failed to move window to workspace")?;
+                                {
+                                    Ok(Some(workspace)) => {
+                                        // Check if window is already in the target workspace
+                                        let workspace_clone_for_check = workspace.clone();
+                                        let target_workspace_id = window_utils::run_blocking(
+                                        niri.clone(),
+                                        move |niri| {
+                                            Ok(niri
+                                                .get_workspaces_for_mapping()
+                                                .ok()
+                                                .and_then(|workspaces| {
+                                                    workspaces
+                                                        .iter()
+                                                        .find(|ws| {
+                                                            ws.idx.to_string() == workspace_clone_for_check
+                                                                || ws.name
+                                                                    .as_ref()
+                                                                    .map(|n| n == &workspace_clone_for_check)
+                                                                    .unwrap_or(false)
+                                                        })
+                                                        .map(|ws| ws.id)
+                                                }))
+                                        },
+                                    )
+                                    .await
+                                    .ok()
+                                    .flatten();
 
-                                    info!(
-                                        "Successfully moved window {} to workspace {}",
-                                        window.id, workspace
-                                    );
-                                    // Only apply the first matching rule
-                                    return Ok(());
-                                }
-                                Ok(None) => {
-                                    warn!(
-                                        "Window {} matched rule but workspace '{}' not found",
-                                        window.id, rule.open_on_workspace
-                                    );
-                                }
-                                Err(e) => {
-                                    warn!(
-                                        "Failed to match workspace '{}' for window {}: {}",
-                                        rule.open_on_workspace, window.id, e
-                                    );
+                                        // If window is already in target workspace, skip moving
+                                        if let (Some(window_ws_id), Some(target_ws_id)) =
+                                            (window.workspace_id, target_workspace_id)
+                                        {
+                                            if window_ws_id == target_ws_id {
+                                                debug!(
+                                                "Window {} is already in target workspace {} (id: {}), skipping move",
+                                                window.id, workspace, target_ws_id
+                                            );
+                                                // Only apply the first matching rule
+                                                break;
+                                            }
+                                        }
+
+                                        // Move window to workspace
+                                        let window_id = window.id;
+                                        let workspace_clone = workspace.clone();
+                                        window_utils::run_blocking(niri.clone(), move |niri| {
+                                            niri.move_window_to_workspace(
+                                                window_id,
+                                                &workspace_clone,
+                                            )
+                                        })
+                                        .await
+                                        .context("Failed to move window to workspace")?;
+
+                                        info!(
+                                            "Successfully moved window {} to workspace {}",
+                                            window.id, workspace
+                                        );
+
+                                        // Focus the moved window
+                                        tokio::time::sleep(tokio::time::Duration::from_millis(100))
+                                            .await;
+                                        if let Err(e) =
+                                            window_utils::focus_window(niri.clone(), window.id)
+                                                .await
+                                        {
+                                            warn!(
+                                                "Failed to focus window {} after moving: {}",
+                                                window.id, e
+                                            );
+                                        } else {
+                                            info!(
+                                                "Focused window {} after moving to workspace {}",
+                                                window.id, workspace
+                                            );
+                                        }
+
+                                        // Only apply the first matching rule
+                                        break;
+                                    }
+                                    Ok(None) => {
+                                        warn!(
+                                            "Window {} matched rule but workspace '{}' not found",
+                                            window.id, open_on_workspace
+                                        );
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "Failed to match workspace '{}' for window {}: {}",
+                                            open_on_workspace, window.id, e
+                                        );
+                                    }
                                 }
                             }
+                            // If no open_on_workspace, continue to check other rules or focus_command
                         }
                         Ok(false) => {
                             // No match, continue to next rule
@@ -233,6 +238,11 @@ impl WindowRulePlugin {
                         }
                     }
                 }
+            }
+            Event::WorkspaceActivated { .. } => {
+                // Workspace activation will trigger WindowFocusChanged event,
+                // so we don't need to handle focus_command here to avoid duplicate execution
+                debug!("Received WorkspaceActivated event");
             }
             other => {
                 // Log other events for debugging
@@ -264,21 +274,7 @@ impl crate::plugins::Plugin for WindowRulePlugin {
 
         info!("Window rule plugin initialized with {} rules", rule_count);
 
-        // Log all configured rules
-        if !config_guard.rules.is_empty() {
-            info!("Configured window rules:");
-            for (i, rule) in config_guard.rules.iter().enumerate() {
-                info!(
-                    "  Rule {}: app_id={:?}, title={:?}, workspace={}",
-                    i + 1,
-                    rule.app_id,
-                    rule.title,
-                    rule.open_on_workspace
-                );
-            }
-        } else {
-            warn!("Window rule plugin initialized but no rules configured");
-        }
+        Self::log_rules(&config_guard.rules, "Configured");
         drop(config_guard);
 
         // Event listener is now handled by PluginManager
@@ -301,7 +297,10 @@ impl crate::plugins::Plugin for WindowRulePlugin {
     }
 
     fn is_interested_in_event(&self, event: &Event) -> bool {
-        matches!(event, Event::WindowOpenedOrChanged { .. })
+        matches!(
+            event,
+            Event::WindowOpenedOrChanged { .. } | Event::WindowFocusChanged { .. }
+        )
     }
 
     async fn update_config(&mut self, niri: NiriIpc, config: &crate::config::Config) -> Result<()> {
@@ -325,32 +324,11 @@ impl crate::plugins::Plugin for WindowRulePlugin {
         );
 
         // Clear regex cache when config changes
-        self.regex_cache.lock().await.clear();
+        self.matcher_cache.clear_cache().await;
 
-        // Log all configured rules
-        if !config_guard.rules.is_empty() {
-            info!("Updated window rules:");
-            for (i, rule) in config_guard.rules.iter().enumerate() {
-                info!(
-                    "  Rule {}: app_id={:?}, title={:?}, workspace={}",
-                    i + 1,
-                    rule.app_id,
-                    rule.title,
-                    rule.open_on_workspace
-                );
-            }
-        } else {
-            warn!("Window rule plugin config updated but no rules configured");
-        }
+        Self::log_rules(&config_guard.rules, "Updated");
         drop(config_guard);
 
         Ok(())
     }
-}
-
-/// Workspace identifier enum (same as empty plugin)
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum WorkspaceIdentifier {
-    Idx(u8),
-    Name(String),
 }

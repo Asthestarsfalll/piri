@@ -2,8 +2,6 @@
 
 Window Rule 插件根据窗口的 `app_id` 或 `title` 使用正则表达式匹配，自动将窗口移动到指定的 workspace。
 
-> **参考**: 此功能类似于 [Hyprland 的 window rules](https://wiki.hypr.land/Configuring/Window-Rules/)。
-
 ## 配置
 
 使用 `[[window_rule]]` 格式配置窗口规则：
@@ -21,12 +19,18 @@ open_on_workspace = "1"
 [[window_rule]]
 title = ".*Chrome.*"
 open_on_workspace = "browser"
+focus_command = "notify-send 'Focusing on Chrome'"
 
 # 同时指定 app_id 和 title（任一匹配即可）
 [[window_rule]]
 app_id = "code"
 title = ".*VS Code.*"
 open_on_workspace = "dev"
+
+# 只有 focus_command，不移动窗口
+[[window_rule]]
+title = ".*Chrome.*"
+focus_command = "notify-send 'Chrome focused'"
 
 # 正则表达式示例：匹配以 "firefox" 开头的 app_id
 [[window_rule]]
@@ -43,9 +47,15 @@ open_on_workspace = "dev"
 
 - **`app_id`** (可选): 用于匹配窗口 `app_id` 的正则表达式
 - **`title`** (可选): 用于匹配窗口标题的正则表达式
-- **`open_on_workspace`** (必需): 目标 workspace 标识符（名称或索引）
+- **`open_on_workspace`** (可选): 目标 workspace 标识符（名称或索引）
+- **`focus_command`** (可选): 当窗口获得焦点时执行的命令
 
-**注意**: 至少需要指定 `app_id` 或 `title` 中的一个。如果两者都指定，则任一匹配即可（OR 逻辑）。
+**注意**: 
+- 至少需要指定 `app_id` 或 `title` 中的一个
+- 至少需要指定 `open_on_workspace` 或 `focus_command` 中的一个
+- 如果同时指定 `app_id` 和 `title`，则任一匹配即可（OR 逻辑）
+
+> **参考**: 关于窗口匹配机制的详细说明，请参阅 [窗口匹配机制文档](../window_matching.md)
 
 ## Workspace 标识符
 

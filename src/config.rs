@@ -114,8 +114,10 @@ pub struct WindowRuleConfig {
     pub app_id: Option<String>,
     /// Regex pattern to match title (optional)
     pub title: Option<String>,
-    /// Workspace to move matching windows to (name or idx)
-    pub open_on_workspace: String,
+    /// Workspace to move matching windows to (name or idx, optional if focus_command is specified)
+    pub open_on_workspace: Option<String>,
+    /// Command to execute when a matching window is focused (optional)
+    pub focus_command: Option<String>,
 }
 
 /// Window rule plugin config (for internal use)
@@ -465,7 +467,8 @@ impl Config {
                         let mut rule = WindowRuleConfig {
                             app_id: None,
                             title: None,
-                            open_on_workspace: String::new(),
+                            open_on_workspace: None,
+                            focus_command: None,
                         };
 
                         if let Some(app_id_value) = rule_table.get("app_id") {
@@ -482,14 +485,17 @@ impl Config {
 
                         if let Some(workspace_value) = rule_table.get("open_on_workspace") {
                             if let Some(workspace_str) = workspace_value.as_str() {
-                                rule.open_on_workspace = workspace_str.to_string();
+                                rule.open_on_workspace = Some(workspace_str.to_string());
                             } else {
                                 warn!("window_rule: open_on_workspace must be a string");
                                 continue;
                             }
-                        } else {
-                            warn!("window_rule: missing required field 'open_on_workspace'");
-                            continue;
+                        }
+
+                        if let Some(focus_command_value) = rule_table.get("focus_command") {
+                            if let Some(focus_command_str) = focus_command_value.as_str() {
+                                rule.focus_command = Some(focus_command_str.to_string());
+                            }
                         }
 
                         // At least one of app_id or title must be specified
@@ -498,15 +504,23 @@ impl Config {
                             continue;
                         }
 
+                        // At least one of open_on_workspace or focus_command must be specified
+                        if rule.open_on_workspace.is_none() && rule.focus_command.is_none() {
+                            warn!("window_rule: at least one of 'open_on_workspace' or 'focus_command' must be specified");
+                            continue;
+                        }
+
                         let app_id_clone = rule.app_id.clone();
                         let title_clone = rule.title.clone();
                         let workspace_clone = rule.open_on_workspace.clone();
+                        let focus_command_clone = rule.focus_command.clone();
                         config.window_rule.push(rule);
                         log::debug!(
-                            "Parsed window rule: app_id={:?}, title={:?}, workspace={}",
+                            "Parsed window rule: app_id={:?}, title={:?}, workspace={:?}, focus_command={:?}",
                             app_id_clone,
                             title_clone,
-                            workspace_clone
+                            workspace_clone,
+                            focus_command_clone
                         );
                     }
                 }

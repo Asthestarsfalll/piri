@@ -6,13 +6,16 @@ use std::collections::HashMap;
 use crate::config::{Config, SingletonConfig};
 use crate::ipc::IpcRequest;
 use crate::niri::NiriIpc;
-use crate::plugins::window_utils;
+use crate::plugins::window_utils::{self, WindowMatcher, WindowMatcherCache};
+use std::sync::Arc;
 
 /// Manages singleton windows (windows that should only have one instance)
 struct SingletonManager {
     niri: NiriIpc,
     /// Map of singleton name to window ID (for tracking)
     singletons: HashMap<String, u64>,
+    /// Window matcher cache for regex pattern matching
+    matcher_cache: Arc<WindowMatcherCache>,
 }
 
 impl SingletonManager {
@@ -20,6 +23,7 @@ impl SingletonManager {
         Self {
             niri,
             singletons: HashMap::new(),
+            matcher_cache: Arc::new(WindowMatcherCache::new()),
         }
     }
 
@@ -79,7 +83,11 @@ impl SingletonManager {
         info!("Using window match pattern: {}", window_match);
 
         // Try to find existing window using pattern matching
-        if let Some(window) = self.niri.find_window_async(&window_match).await? {
+        let matcher = WindowMatcher::new(Some(window_match.clone()), None);
+        if let Some(window) =
+            window_utils::find_window_by_matcher(self.niri.clone(), &matcher, &self.matcher_cache)
+                .await?
+        {
             info!(
                 "Found existing window for singleton {} (ID: {})",
                 name, window.id

@@ -18,10 +18,21 @@
 
 - 📦 **Scratchpads**: 强大的窗口管理功能，支持快速显示和隐藏常用应用程序的窗口，跨 workspace 和 monitor（详见 [Scratchpads 文档](docs/zh/plugins/scratchpads.md)）
 - 🔌 **Empty**: 在切换到空 workspace 时自动执行命令，用于自动化工作流程（详见 [Empty 文档](docs/zh/plugins/empty.md)）
-- 🎯 **Window Rule**: 根据窗口的 `app_id` 或 `title` 使用正则表达式匹配，自动将窗口移动到指定 workspace（详见 [Window Rule 文档](docs/zh/plugins/window_rule.md)）
+- 🎯 **Window Rule**: 根据窗口的 `app_id` 或 `title` 使用正则表达式匹配，自动将窗口移动到指定 workspace，并支持在窗口获得焦点时执行命令（详见 [Window Rule 文档](docs/zh/plugins/window_rule.md)）
 - 🔄 **Autofill**: 在窗口关闭或布局改变时自动将最后一列窗口对齐到最右侧位置（详见 [Autofill 文档](docs/zh/plugins/autofill.md)）
 - 🔒 **Singleton**: 管理单例窗口，切换时如果窗口已存在则聚焦，否则启动应用程序（详见 [Singleton 文档](docs/zh/plugins/singleton.md)）
 - 📋 **Window Order**: 根据配置的权重值自动重排工作区中的窗口顺序，权重值越大窗口越靠左（详见 [Window Order 文档](docs/zh/plugins/window_order.md)）
+
+## 窗口匹配机制
+
+Piri 使用统一的窗口匹配机制，支持通过正则表达式匹配窗口的 `app_id` 和 `title`。多个插件（如 `window_rule`、`singleton`、`scratchpads`）都使用此机制来查找和匹配窗口。
+
+**支持的匹配方式**：
+- ✅ **正则表达式匹配**: 支持完整的正则表达式语法
+- ✅ **灵活匹配**: 支持 `app_id` 和/或 `title` 匹配
+- ✅ **OR 逻辑**: 如果同时指定 `app_id` 和 `title`，任一匹配即可
+
+**详细文档**: [窗口匹配机制文档](docs/zh/window_matching.md)
 
 ## 快速开始
 
@@ -166,39 +177,37 @@ command = "firefox"
 
 ### Window Rule
 
-根据窗口的 `app_id` 或 `title` 使用正则表达式匹配，自动将窗口移动到指定的 workspace。这对于自动化窗口管理非常有用，例如将特定应用程序自动分配到特定 workspace。
-
-> **参考**: 此功能类似于 [Hyprland 的 window rules](https://wiki.hypr.land/Configuring/Window-Rules/)。
+根据窗口的 `app_id` 或 `title` 使用正则表达式匹配，自动将窗口移动到指定的 workspace，并支持在窗口获得焦点时执行命令。
 
 **配置示例**：
 ```toml
 [piri.plugins]
 window_rule = true
 
-# 根据 app_id 匹配
+# 根据 app_id 匹配，移动到 workspace（精确匹配：先 name，后 idx）
 [[window_rule]]
-app_id = "ghostty"
-open_on_workspace = "1"
+app_id = ".*firefox.*"
+open_on_workspace = "2"
 
-# 根据 title 匹配
+# 根据 title 匹配，移动到 workspace，并在获得焦点时执行命令
 [[window_rule]]
 title = ".*Chrome.*"
-open_on_workspace = "browser"
+open_on_workspace = "3"
+focus_command = "[[ $(fcitx5-remote) -eq 2 ]] && fcitx5-remote -c"
 
-# 同时指定 app_id 和 title（任一匹配即可）
+# 同时指定 app_id 和 title（任一匹配即可），移动到 workspace（name）
 [[window_rule]]
 app_id = "code"
 title = ".*VS Code.*"
-open_on_workspace = "dev"
+open_on_workspace = "browser"
+
+# 只有 focus_command，不移动窗口
+[[window_rule]]
+title = ".*Chrome.*"
+focus_command = "notify-send 'Chrome focused'"
 ```
 
-**特性**：
-- 支持正则表达式匹配
-- 支持按 `app_id` 或 `title` 匹配，或两者组合（OR 逻辑）
-- 支持 workspace 名称或索引匹配
-- 纯事件驱动，实时响应窗口创建
-
-详细说明请参考 [Window Rule 文档](docs/zh/plugins/window_rule.md)。
+详细说明请参考 [Window Rule 文档](docs/zh/plugins/window_rule.md) 和 [窗口匹配机制文档](docs/zh/window_matching.md)。
 
 ### Autofill
 

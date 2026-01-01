@@ -1,13 +1,13 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use log::{debug, info, warn};
 use niri_ipc::Event;
 use std::collections::HashMap;
-use std::process::{Command, Stdio};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::config::EmptyPluginConfig;
 use crate::niri::NiriIpc;
+use crate::plugins::window_utils;
 
 /// Empty plugin that executes commands when switching to empty workspaces
 pub struct EmptyPlugin {
@@ -27,15 +27,6 @@ impl EmptyPlugin {
             config: Arc::new(Mutex::new(EmptyPluginConfig::default())),
             last_workspace: Arc::new(Mutex::new(None)),
             workspace_empty: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-
-    /// Get workspace identifier from config entry  
-    fn parse_workspace_identifier(workspace: &str) -> WorkspaceIdentifier {
-        if let Ok(idx) = workspace.parse::<u8>() {
-            WorkspaceIdentifier::Idx(idx)
-        } else {
-            WorkspaceIdentifier::Name(workspace.to_string())
         }
     }
 
@@ -92,31 +83,39 @@ impl EmptyPlugin {
                             // Execute command if workspace is empty
                             if is_empty {
                                 // Get current config (may have been updated)
-                                let config_guard = self.config.lock().await;
-
-                                // Try direct match first (by idx)
+                                // Try exact match: first by name, then by idx
                                 let mut command_found = false;
-                                if let Some(command) = config_guard.workspaces.get(&workspace_key) {
-                                    let cmd = command.clone();
-                                    drop(config_guard);
-                                    info!("Workspace {} is empty (WorkspaceActivated), executing command: {}", 
-                                              workspace_key, cmd);
-                                    Self::execute_command(&workspace_key, &cmd).await?;
-                                    command_found = true;
-                                } else if let Some(name) = &focused_ws.name {
-                                    // Try matching by name (workspace name from niri)
+
+                                // First: exact name match
+                                if let Some(name) = &focused_ws.name {
+                                    let config_guard = self.config.lock().await;
                                     if let Some(command) = config_guard.workspaces.get(name) {
                                         let cmd = command.clone();
                                         drop(config_guard);
-                                        info!("Workspace {} (name: {}) matched by name in WorkspaceActivated, executing command: {}", 
+                                        info!("Workspace {} (name: {}) matched by exact name, executing command: {}", 
                                                   workspace_key, name, cmd);
                                         Self::execute_command(&workspace_key, &cmd).await?;
                                         command_found = true;
                                     } else {
                                         drop(config_guard);
                                     }
-                                } else {
-                                    drop(config_guard);
+                                }
+
+                                // Second: exact idx match (if name match failed)
+                                if !command_found {
+                                    let config_guard = self.config.lock().await;
+                                    if let Some(command) =
+                                        config_guard.workspaces.get(&workspace_key)
+                                    {
+                                        let cmd = command.clone();
+                                        drop(config_guard);
+                                        info!("Workspace {} matched by exact idx, executing command: {}", 
+                                                  workspace_key, cmd);
+                                        Self::execute_command(&workspace_key, &cmd).await?;
+                                        command_found = true;
+                                    } else {
+                                        drop(config_guard);
+                                    }
                                 }
 
                                 if !command_found {
@@ -156,7 +155,7 @@ impl EmptyPlugin {
         Ok(())
     }
 
-    /// Try to match workspace by name and idx, then execute if empty
+    /// Try to match workspace by exact name or idx, then execute if empty
     async fn try_match_and_execute(
         workspace_key: &str,
         is_empty: bool,
@@ -176,70 +175,43 @@ impl EmptyPlugin {
         let config_guard = config.lock().await;
         let workspaces_map = config_guard.workspaces.clone();
         drop(config_guard);
-        let current_workspace = Self::parse_workspace_identifier(workspace_key);
 
         debug!(
-            "Trying to match workspace '{}' (parsed as {:?}) against {} configured rules",
+            "Trying to match workspace '{}' against {} configured rules",
             workspace_key,
-            current_workspace,
             workspaces_map.len()
         );
 
-        // First pass: try name matching
-        debug!("First pass: trying name-based matching");
+        // First pass: exact name match
+        debug!("First pass: trying exact name matching");
         for (key, command) in &workspaces_map {
-            let key_identifier = Self::parse_workspace_identifier(key);
-            let command = command.clone();
-
-            let matches = match (&current_workspace, &key_identifier) {
-                (WorkspaceIdentifier::Name(a), WorkspaceIdentifier::Name(b)) => {
-                    debug!("  Comparing name '{}' with name '{}'", a, b);
-                    a == b
-                }
-                (WorkspaceIdentifier::Name(name), WorkspaceIdentifier::Idx(key_idx)) => {
-                    debug!("  Comparing name '{}' with idx '{}'", name, key_idx);
-                    name == &key_idx.to_string()
-                }
-                (WorkspaceIdentifier::Idx(idx), WorkspaceIdentifier::Name(name)) => {
-                    debug!("  Comparing idx '{}' with name '{}'", idx, name);
-                    name == &idx.to_string()
-                }
-                _ => false,
-            };
-
-            if matches {
+            // Exact name match only
+            if key == workspace_key {
                 info!(
-                    "Workspace {} matched by name with config key '{}', executing command: {}",
+                    "Workspace {} matched by exact name with config key '{}', executing command: {}",
                     workspace_key, key, command
                 );
-                Self::execute_command(workspace_key, &command).await?;
+                Self::execute_command(workspace_key, command).await?;
                 workspace_empty.lock().await.insert(workspace_key.to_string(), true);
                 return Ok(());
             }
         }
 
-        // Second pass: try idx matching
-        debug!("Second pass: trying idx-based matching");
-        for (key, command) in &workspaces_map {
-            let key_identifier = Self::parse_workspace_identifier(key);
-            let command = command.clone();
-
-            let matches = match (&current_workspace, &key_identifier) {
-                (WorkspaceIdentifier::Idx(a), WorkspaceIdentifier::Idx(b)) => {
-                    debug!("  Comparing idx '{}' with idx '{}'", a, b);
-                    a == b
+        // Second pass: exact idx match
+        debug!("Second pass: trying exact idx matching");
+        if let Ok(workspace_idx) = workspace_key.parse::<u8>() {
+            for (key, command) in &workspaces_map {
+                if let Ok(key_idx) = key.parse::<u8>() {
+                    if key_idx == workspace_idx {
+                        info!(
+                            "Workspace {} matched by exact idx with config key '{}', executing command: {}",
+                            workspace_key, key, command
+                        );
+                        Self::execute_command(workspace_key, command).await?;
+                        workspace_empty.lock().await.insert(workspace_key.to_string(), true);
+                        return Ok(());
+                    }
                 }
-                _ => false,
-            };
-
-            if matches {
-                info!(
-                    "Workspace {} matched by idx with config key '{}', executing command: {}",
-                    workspace_key, key, command
-                );
-                Self::execute_command(workspace_key, &command).await?;
-                workspace_empty.lock().await.insert(workspace_key.to_string(), true);
-                return Ok(());
             }
         }
 
@@ -254,20 +226,11 @@ impl EmptyPlugin {
             workspace_key, command
         );
 
-        // Execute command
-        let output = Command::new("sh")
-            .arg("-c")
-            .arg(command)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .with_context(|| format!("Failed to execute command: {}", command))?;
+        window_utils::execute_command(command)?;
 
         info!(
-            "Command executed successfully for workspace {} (PID: {})",
-            workspace_key,
-            output.id()
+            "Command executed successfully for workspace {}",
+            workspace_key
         );
         Ok(())
     }
@@ -363,23 +326,5 @@ impl crate::plugins::Plugin for EmptyPlugin {
         drop(config_guard);
 
         Ok(())
-    }
-}
-
-/// Workspace identifier enum to handle different identifier types
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum WorkspaceIdentifier {
-    Idx(u8),
-    Id(u64),
-    Name(String),
-}
-
-impl WorkspaceIdentifier {
-    fn to_string(&self) -> String {
-        match self {
-            WorkspaceIdentifier::Idx(idx) => idx.to_string(),
-            WorkspaceIdentifier::Id(id) => id.to_string(),
-            WorkspaceIdentifier::Name(name) => name.clone(),
-        }
     }
 }

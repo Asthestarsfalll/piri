@@ -48,27 +48,43 @@ margin = 50
 # Format: [[window_rule]]
 # - app_id: regex pattern to match window app_id (optional, but at least one of app_id or title must be specified)
 # - title: regex pattern to match window title (optional, but at least one of app_id or title must be specified)
-# - open_on_workspace: workspace to move matching windows to (name or idx)
-# Note: If both app_id and title are specified, the rule matches if EITHER matches (OR logic)
-# Matching order: first matching rule is applied
-# Example: match by app_id regex pattern
+# - open_on_workspace: workspace to move matching windows to (exact name or idx match, name first, then idx)
+# - focus_command: command to execute when window gains focus (optional)
+# Note:
+#   - If both app_id and title are specified, the rule matches if EITHER matches (OR logic)
+#   - At least one of open_on_workspace or focus_command must be specified
+#   - Workspace matching: exact name match first, then exact idx match
+#   - Matching order: first matching rule is applied
+# Example: match by app_id regex pattern, move to workspace by idx
 [[window_rule]]
 app_id = ".*firefox.*"
 open_on_workspace = "2"
 
-# Example: match by title regex pattern
+# Example: match by title regex pattern, move to workspace by idx, with focus_command
 [[window_rule]]
 title = ".*Chrome.*"
 open_on_workspace = "3"
+focus_command = "[[ $(fcitx5-remote) -eq 2 ]] && fcitx5-remote -c"
 
-# Example: match by either app_id OR title
+# Example: match by either app_id OR title, move to workspace by name
 [[window_rule]]
 app_id = "code"
 title = ".*VS Code.*"
 open_on_workspace = "browser"
 
+# Example: only focus_command, don't move window
+[[window_rule]]
+title = ".*Chrome.*"
+focus_command = "notify-send 'Chrome focused'"
+
+# Example: exact app_id match (using regex anchors)
+[[window_rule]]
+app_id = "^code$"
+open_on_workspace = "dev"
+
 [singleton.browser]
 command = 'google-chrome-stable'
+
 
 [singleton.term]
 command = 'GTK_IM_MODULE=wayland ghostty --class=singleton.term'

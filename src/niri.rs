@@ -504,12 +504,34 @@ impl NiriIpc {
         }
     }
 
-    /// Find window by class, title, or app_id
-    /// Uses exact match first for app_id, then partial match for app_id, class and title
+    /// Find window by app_id or title using regex pattern
+    /// This method is deprecated, use window_utils::find_window_by_matcher instead
+    /// Kept for backward compatibility, converts string pattern to regex
+    #[deprecated(note = "Use window_utils::find_window_by_matcher with WindowMatcher instead")]
     pub fn find_window(&self, pattern: &str) -> Result<Option<Window>> {
+        // For backward compatibility, try to match as regex first, then fallback to string matching
+        use regex::Regex;
+
         let windows = self.get_windows()?;
 
-        // First pass: exact match for app_id (most reliable)
+        // Try regex matching first
+        if let Ok(regex) = Regex::new(pattern) {
+            for window in &windows {
+                // Check app_id
+                if let Some(ref app_id) = window.app_id {
+                    if regex.is_match(app_id) {
+                        return Ok(Some(window.clone()));
+                    }
+                }
+                // Check title
+                if regex.is_match(&window.title) {
+                    return Ok(Some(window.clone()));
+                }
+            }
+        }
+
+        // Fallback to string matching for backward compatibility
+        // Exact match for app_id
         for window in &windows {
             if let Some(ref app_id) = window.app_id {
                 if app_id == pattern {
@@ -518,27 +540,17 @@ impl NiriIpc {
             }
         }
 
-        // Second pass: partial match for app_id (pattern starts with app_id or vice versa)
-        // This handles cases like "google-chrome-stable" (pattern) matching "google-chrome" (app_id)
+        // Partial match for app_id
         for window in &windows {
             if let Some(ref app_id) = window.app_id {
-                // Check if pattern starts with app_id (e.g., "google-chrome-stable" starts with "google-chrome")
-                // or app_id starts with pattern (e.g., "google-chrome" starts with "google")
                 if pattern.starts_with(app_id) || app_id.starts_with(pattern) {
                     return Ok(Some(window.clone()));
                 }
             }
         }
 
-        // Third pass: partial match for class and title
+        // Partial match for title
         for window in windows {
-            // Partial match for class
-            if let Some(ref class) = window.class {
-                if class.contains(pattern) {
-                    return Ok(Some(window));
-                }
-            }
-            // Partial match for title
             if window.title.contains(pattern) {
                 return Ok(Some(window));
             }
@@ -547,9 +559,10 @@ impl NiriIpc {
         Ok(None)
     }
 
-    /// Find window by class or title (async version)
+    /// Find window by app_id or title (async version)
+    /// This method is deprecated, use window_utils::find_window_by_matcher instead
+    #[deprecated(note = "Use window_utils::find_window_by_matcher with WindowMatcher instead")]
     pub async fn find_window_async(&self, pattern: &str) -> Result<Option<Window>> {
-        // Run in blocking thread pool since Command is blocking
         let pattern = pattern.to_string();
         let niri = self.clone();
 

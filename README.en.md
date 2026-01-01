@@ -18,11 +18,21 @@ Contributions, suggestions, bug reports and comments are welcome.
 
 - 📦 **Scratchpads**: Powerful window management feature that allows you to quickly show and hide windows of frequently used applications, supporting cross-workspace and cross-monitor (see [Scratchpads documentation](docs/en/plugins/scratchpads.md) for details)
 - 🔌 **Empty**: Automatically execute commands when switching to empty workspaces, useful for automating workflows (see [Empty documentation](docs/en/plugins/empty.md) for details)
-- 🎯 **Window Rule**: Automatically move windows to specified workspaces based on `app_id` or `title` using regular expression matching (see [Window Rule documentation](docs/en/plugins/window_rule.md) for details)
+- 🎯 **Window Rule**: Automatically move windows to specified workspaces based on `app_id` or `title` using regular expression matching, and supports executing commands when windows gain focus (see [Window Rule documentation](docs/en/plugins/window_rule.md) for details)
 - 🔄 **Autofill**: Automatically aligns the last column of windows to the rightmost position when windows are closed or layout changes (see [Autofill documentation](docs/en/plugins/autofill.md) for details)
 - 🔒 **Singleton**: Manages singleton windows - when toggling a singleton, if the window exists it focuses it, otherwise it launches the application (see [Singleton documentation](docs/en/plugins/singleton.md) for details)
 - 📋 **Window Order**: Automatically reorder windows in workspace based on configured priority weights, with larger weights positioning windows further to the left (see [Window Order documentation](docs/en/plugins/window_order.md) for details)
 
+## Window Matching Mechanism
+
+Piri uses a unified window matching mechanism that supports matching windows by `app_id` and `title` using regular expressions. Multiple plugins (such as `window_rule`, `singleton`, `scratchpads`) use this mechanism to find and match windows.
+
+**Supported Matching Methods**:
+- ✅ **Regular Expression Matching**: Supports full regular expression syntax
+- ✅ **Flexible Matching**: Supports `app_id` and/or `title` matching
+- ✅ **OR Logic**: If both `app_id` and `title` are specified, either match works
+
+**Detailed Documentation**: [Window Matching Mechanism](docs/en/window_matching.md)
 
 ## Quick Start
 
@@ -167,39 +177,37 @@ For detailed documentation, please refer to [Plugin System documentation](docs/e
 
 ### Window Rule
 
-Automatically move windows to specified workspaces based on their `app_id` or `title` using regular expression matching. This is very useful for automating window management, such as automatically assigning specific applications to specific workspaces.
-
-> **Reference**: This functionality is similar to [Hyprland's window rules](https://wiki.hypr.land/Configuring/Window-Rules/).
+Automatically move windows to specified workspaces based on their `app_id` or `title` using regular expression matching, and supports executing commands when windows gain focus.
 
 **Configuration Example**:
 ```toml
 [piri.plugins]
 window_rule = true
 
-# Match by app_id
+# Match by app_id, move to workspace (exact match: name first, then idx)
 [[window_rule]]
-app_id = "ghostty"
-open_on_workspace = "1"
+app_id = ".*firefox.*"
+open_on_workspace = "2"
 
-# Match by title
+# Match by title, move to workspace, execute command on focus
 [[window_rule]]
 title = ".*Chrome.*"
-open_on_workspace = "browser"
+open_on_workspace = "3"
+focus_command = "[[ $(fcitx5-remote) -eq 2 ]] && fcitx5-remote -c"
 
-# Specify both app_id and title (either match works)
+# Specify both app_id and title (either match works), move to workspace (name)
 [[window_rule]]
 app_id = "code"
 title = ".*VS Code.*"
-open_on_workspace = "dev"
+open_on_workspace = "browser"
+
+# Only focus_command, don't move window
+[[window_rule]]
+title = ".*Chrome.*"
+focus_command = "notify-send 'Chrome focused'"
 ```
 
-**Features**:
-- Regular expression pattern matching support
-- Match by `app_id` or `title`, or both combined (OR logic)
-- Support workspace name or index matching
-- Pure event-driven, real-time response to window creation
-
-For detailed documentation, please refer to the [Window Rule documentation](docs/en/plugins/window_rule.md).
+For detailed documentation, please refer to the [Window Rule documentation](docs/en/plugins/window_rule.md) and [Window Matching Mechanism](docs/en/window_matching.md).
 
 ### Autofill
 

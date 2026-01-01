@@ -7,7 +7,8 @@ use tokio::time::{sleep, Duration};
 use crate::config::{Config, ScratchpadConfig};
 use crate::ipc::IpcRequest;
 use crate::niri::NiriIpc;
-use crate::plugins::window_utils;
+use crate::plugins::window_utils::{self, WindowMatcher, WindowMatcherCache};
+use std::sync::Arc;
 
 /// Manages scratchpad windows
 struct ScratchpadManager {
@@ -22,6 +23,8 @@ struct ScratchpadManager {
     previous_focused_windows: HashMap<String, Option<u64>>,
     /// Map of scratchpad name to config (for dynamically added scratchpads)
     dynamic_configs: HashMap<String, ScratchpadConfig>,
+    /// Window matcher cache for regex pattern matching
+    matcher_cache: Arc<WindowMatcherCache>,
 }
 
 impl ScratchpadManager {
@@ -33,6 +36,7 @@ impl ScratchpadManager {
             original_workspaces: HashMap::new(),
             previous_focused_windows: HashMap::new(),
             dynamic_configs: HashMap::new(),
+            matcher_cache: Arc::new(WindowMatcherCache::new()),
         }
     }
 
@@ -100,7 +104,14 @@ impl ScratchpadManager {
 
         if let Some(&window_id) = self.scratchpads.get(name) {
             // Check if window still exists
-            if let Some(window) = self.niri.find_window_async(&window_match).await? {
+            let matcher = WindowMatcher::new(Some(window_match.clone()), None);
+            if let Some(window) = window_utils::find_window_by_matcher(
+                self.niri.clone(),
+                &matcher,
+                &self.matcher_cache,
+            )
+            .await?
+            {
                 if window.id == window_id {
                     // Window exists, toggle visibility
                     self.toggle_window_visibility(window_id, name, config).await?;
@@ -120,7 +131,11 @@ impl ScratchpadManager {
         }
 
         // Try to find existing window
-        if let Some(window) = self.niri.find_window_async(&window_match).await? {
+        let matcher = WindowMatcher::new(Some(window_match.clone()), None);
+        if let Some(window) =
+            window_utils::find_window_by_matcher(self.niri.clone(), &matcher, &self.matcher_cache)
+                .await?
+        {
             info!("Found existing window for scratchpad {}", name);
             // Ensure window is floating before registering
             let window_id = window.id;

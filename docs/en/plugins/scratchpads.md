@@ -37,9 +37,13 @@ margin = 100
   - `fromLeft`: Slide in from left
   - `fromRight`: Slide in from right
 - `command` (required): Full command string to launch the application, can include environment variables and arguments
-- `app_id` (required): Application ID used to match windows
+- `app_id` (required): Application ID used to match windows (supports regular expressions)
 - `size` (required): Window size in format `"width% height%"`
 - `margin` (required): Margin from screen edge in pixels
+
+> **Note**: `app_id` uses regular expression matching. If `app_id` contains special characters (such as `.`, `*`, etc.), they need to be escaped. For example: `app_id = "float\\.dropterm"`
+
+> **Reference**: For detailed information about the window matching mechanism, see [Window Matching Mechanism](../window_matching.md)
 
 ## Usage
 

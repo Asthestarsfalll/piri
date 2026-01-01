@@ -58,33 +58,24 @@ impl WindowOrderPlugin {
             return true;
         }
 
-        // Try to match workspace by name or idx
+        // Try to match workspace by exact name or idx
         for configured_ws in workspaces {
-            // Direct name match
+            // Exact name match
             if configured_ws == workspace_name {
                 debug!(
-                    "Workspace '{}' matched configured workspace '{}' (direct match)",
+                    "Workspace '{}' matched configured workspace '{}' (exact name match)",
                     workspace_name, configured_ws
                 );
                 return true;
             }
 
-            // Try parsing as idx and compare
-            if let Ok(configured_idx) = configured_ws.parse::<u8>() {
-                if workspace_name == configured_idx.to_string() {
+            // Exact idx match
+            if let (Ok(configured_idx), Ok(ws_idx)) =
+                (configured_ws.parse::<u8>(), workspace_name.parse::<u8>())
+            {
+                if configured_idx == ws_idx {
                     debug!(
-                        "Workspace '{}' matched configured workspace '{}' (idx match)",
-                        workspace_name, configured_ws
-                    );
-                    return true;
-                }
-            }
-
-            // Try parsing workspace_name as idx and compare
-            if let Ok(ws_idx) = workspace_name.parse::<u8>() {
-                if configured_ws == &ws_idx.to_string() {
-                    debug!(
-                        "Workspace '{}' matched configured workspace '{}' (reverse idx match)",
+                        "Workspace '{}' matched configured workspace '{}' (exact idx match)",
                         workspace_name, configured_ws
                     );
                     return true;
