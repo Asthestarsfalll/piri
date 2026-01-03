@@ -52,13 +52,18 @@ impl WindowRulePlugin {
     /// Execute focus command with de-duplication
     async fn execute_focus_rule(&mut self, window_id: u64, focus_command: &str) -> Result<()> {
         let now = Instant::now();
-        if let (Some(last_id), Some(last_time)) = (self.last_focused_window, self.last_execution_time) {
+        if let (Some(last_id), Some(last_time)) =
+            (self.last_focused_window, self.last_execution_time)
+        {
             if last_id == window_id && now.duration_since(last_time) < Duration::from_millis(200) {
                 return Ok(());
             }
         }
 
-        info!("Executing focus_command for window {}: {}", window_id, focus_command);
+        info!(
+            "Executing focus_command for window {}: {}",
+            window_id, focus_command
+        );
         window_utils::execute_command(focus_command)?;
 
         self.last_focused_window = Some(window_id);

@@ -67,15 +67,14 @@ impl ScratchpadManager {
         }
     }
 
-    async fn get_target_geometry(
+    async fn get_target_position(
         &self,
         config: &ScratchpadConfig,
+        window_width: u32,
+        window_height: u32,
         is_visible: bool,
-    ) -> Result<(i32, i32, u32, u32)> {
+    ) -> Result<(i32, i32)> {
         let (output_width, output_height) = self.niri.get_output_size().await?;
-        let (width_ratio, height_ratio) = config.parse_size()?;
-        let window_width = (output_width as f64 * width_ratio) as u32;
-        let window_height = (output_height as f64 * height_ratio) as u32;
 
         let (x, y) = if is_visible {
             window_utils::calculate_position(
@@ -96,6 +95,22 @@ impl ScratchpadManager {
                 config.margin,
             )
         };
+        Ok((x, y))
+    }
+
+    async fn get_target_geometry(
+        &self,
+        config: &ScratchpadConfig,
+        is_visible: bool,
+    ) -> Result<(i32, i32, u32, u32)> {
+        let (output_width, output_height) = self.niri.get_output_size().await?;
+        let (width_ratio, height_ratio) = config.parse_size()?;
+        let window_width = (output_width as f64 * width_ratio) as u32;
+        let window_height = (output_height as f64 * height_ratio) as u32;
+
+        let (x, y) = self
+            .get_target_position(config, window_width, window_height, is_visible)
+            .await?;
         Ok((x, y, window_width, window_height))
     }
 
@@ -121,12 +136,13 @@ impl ScratchpadManager {
     }
 
     async fn sync_state(&mut self, name: &str) -> Result<()> {
-        let (config, is_visible, window_id) = {
+        let (config, is_visible, window_id, is_dynamic) = {
             let state = self.states.get_mut(name).context("State not found")?;
             (
                 state.config.clone(),
                 state.is_visible,
                 state.window_id.context("Window ID not found")?,
+                state.is_dynamic,
             )
         };
 
@@ -136,19 +152,28 @@ impl ScratchpadManager {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
-        let (target_x, target_y, width, height) =
-            self.get_target_geometry(&config, is_visible).await?;
-
-        // Resize before moving when showing to ensure correct dimensions
-        if is_visible {
-            self.niri.resize_floating_window(window_id, width, height).await?;
-        }
-
-        let (current_x, current_y, _, _) = self
+        // Get current position and size
+        let (current_x, current_y, current_width, current_height) = self
             .niri
             .get_window_position_async(window_id)
             .await?
             .context("Failed to get window position")?;
+
+        let (target_x, target_y, target_width, target_height) = if is_dynamic {
+            // For dynamic scratchpads, use current size to calculate target position
+            let (tx, ty) = self
+                .get_target_position(&config, current_width, current_height, is_visible)
+                .await?;
+            (tx, ty, current_width, current_height)
+        } else {
+            // For configured scratchpads, use config size
+            self.get_target_geometry(&config, is_visible).await?
+        };
+
+        // Only resize for non-dynamic scratchpads when showing
+        if is_visible && !is_dynamic {
+            self.niri.resize_floating_window(window_id, target_width, target_height).await?;
+        }
 
         window_utils::move_window_to_position(
             &self.niri, window_id, current_x, current_y, target_x, target_y,

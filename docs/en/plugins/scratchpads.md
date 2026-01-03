@@ -70,6 +70,8 @@ piri scratchpads mypad add fromRight
 
 Dynamically added scratchpads will use the default size and margin set in the `[piri.scratchpad]` section.
 
+> **Note**: Dynamically added windows are only resized once during initial registration. After that, you can manually resize the window, and the plugin will maintain your custom size during subsequent show/hide toggles without overriding it.
+
 ## How It Works
 
 1. **First Launch**: If the window doesn't exist, launches the application specified in the configuration
