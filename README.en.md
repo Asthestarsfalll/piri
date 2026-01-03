@@ -4,24 +4,16 @@
 
 ---
 
-Welcome to Piri, your gateway to extending the capabilities of niri compositor. Piri offers an extensible command system designed for simplicity and efficiency, allowing you to supercharge your productivity and customize your user experience.
+Piri is a high-performance [Niri](https://github.com/YaLTeR/niri) extension tool built with Rust. It leverages efficient Niri IPC interaction and a unified event distribution mechanism to provide a robust, state-driven plugin system.
 
-You can think of it as a similar tool but for niri users (involves editing text files). With a command-based architecture, Piri is designed to be lightweight and easy to use.
+## Core Plugins
 
-Note that usage of Rust and daemon architecture encourages using many features with little impact on the footprint and performance.
-
-Contributions, suggestions, bug reports and comments are welcome.
-
-> **Note**: This project was entirely developed with the assistance of [Cursor](https://cursor.sh/) AI code editor.
-
-## Supported Plugins
-
-- 📦 **Scratchpads**: Powerful window management feature that allows you to quickly show and hide windows of frequently used applications, supporting cross-workspace and cross-monitor (see [Scratchpads documentation](docs/en/plugins/scratchpads.md) for details)
-- 🔌 **Empty**: Automatically execute commands when switching to empty workspaces, useful for automating workflows (see [Empty documentation](docs/en/plugins/empty.md) for details)
-- 🎯 **Window Rule**: Automatically move windows to specified workspaces based on `app_id` or `title` using regular expression matching (see [Window Rule documentation](docs/en/plugins/window_rule.md) for details)
-- 🔄 **Autofill**: Automatically aligns the last column of windows to the rightmost position when windows are closed or layout changes (see [Autofill documentation](docs/en/plugins/autofill.md) for details)
-- 🔒 **Singleton**: Manages singleton windows - when toggling a singleton, if the window exists it focuses it, otherwise it launches the application (see [Singleton documentation](docs/en/plugins/singleton.md) for details)
-- 📋 **Window Order**: Automatically reorder windows in workspace based on configured priority weights, with larger weights positioning windows further to the left (see [Window Order documentation](docs/en/plugins/window_order.md) for details)
+- 📦 **Scratchpads**: Intelligent hide/show windows. Supports auto-capturing existing windows or launching on-demand, following you seamlessly across workspaces and monitors (see [Scratchpads Docs](docs/en/plugins/scratchpads.md))
+- 🔌 **Empty**: Automation for empty workspaces. Automatically triggers preset commands when switching to an empty workspace to get you into the flow faster (see [Empty Docs](docs/en/plugins/empty.md))
+- 🎯 **Window Rule**: Powerful rule engine. Automatically places windows based on regex matching and provides focus-triggered command execution with a built-in de-duplication mechanism (see [Window Rule Docs](docs/en/plugins/window_rule.md))
+- 🔄 **Autofill**: Layout auto-alignment. Automatically aligns remaining windows when a window is closed or layout changes, keeping your interface clean (see [Autofill Docs](docs/en/plugins/autofill.md))
+- 🔒 **Singleton**: Single-instance assurance. Ensures specific applications remain globally unique, supporting quick focus or automatic process launching (see [Singleton Docs](docs/en/plugins/singleton.md))
+- 📋 **Window Order**: Intelligent reordering. Automatically reorders tiled windows based on configured weights, preserving relative positions for identical weights to minimize movement (see [Window Order Docs](docs/en/plugins/window_order.md))
 
 
 ## Quick Start
@@ -196,11 +188,22 @@ open_on_workspace = "browser"
 app_id = "code"
 title = ".*VS Code.*"
 open_on_workspace = "dev"
+
+# app_id as a list (any one matches)
+[[window_rule]]
+app_id = ["code", "code-oss", "codium"]
+open_on_workspace = "dev"
+
+# title as a list (any one matches)
+[[window_rule]]
+title = [".*Chrome.*", ".*Chromium.*", ".*Google Chrome.*"]
+open_on_workspace = "browser"
 ```
 
 **Features**:
 - Regular expression pattern matching support
 - Match by `app_id` or `title`, or both combined (OR logic)
+- Support for lists of patterns: `app_id` and `title` can be lists, any one match triggers the rule
 - Support workspace name or index matching
 - Pure event-driven, real-time response to window creation
 

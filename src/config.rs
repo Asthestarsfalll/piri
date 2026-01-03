@@ -1,8 +1,64 @@
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+
+use crate::plugins::empty::EmptyPluginConfig;
+
+/// Direction from which the scratchpad appears
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    FromTop,
+    FromBottom,
+    FromLeft,
+    FromRight,
+}
+
+impl Direction {
+    /// Convert string to Direction
+    pub fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "fromTop" => Ok(Direction::FromTop),
+            "fromBottom" => Ok(Direction::FromBottom),
+            "fromLeft" => Ok(Direction::FromLeft),
+            "fromRight" => Ok(Direction::FromRight),
+            _ => anyhow::bail!(
+                "Invalid direction: {}. Must be one of: fromTop, fromBottom, fromLeft, fromRight",
+                s
+            ),
+        }
+    }
+
+    /// Convert Direction to string
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Direction::FromTop => "fromTop",
+            Direction::FromBottom => "fromBottom",
+            Direction::FromLeft => "fromLeft",
+            Direction::FromRight => "fromRight",
+        }
+    }
+}
+
+impl Serialize for Direction {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for Direction {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Direction::from_str(&s).map_err(serde::de::Error::custom)
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -76,25 +132,18 @@ impl Default for PiriConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginsConfig {
-    /// Enable/disable scratchpads plugin (default: true if scratchpads are configured)
     #[serde(default)]
     pub scratchpads: Option<bool>,
-    /// Enable/disable empty plugin (default: true if empty workspace rules are configured)
     #[serde(default)]
     pub empty: Option<bool>,
-    /// Enable/disable window_rule plugin (default: true if window rules are configured)
     #[serde(default)]
     pub window_rule: Option<bool>,
-    /// Enable/disable autofill plugin (default: false)
     #[serde(default)]
     pub autofill: Option<bool>,
-    /// Enable/disable singleton plugin (default: true if singleton configs are configured)
     #[serde(default)]
     pub singleton: Option<bool>,
-    /// Enable/disable window_order plugin (default: true if window_order configs are configured)
     #[serde(default)]
     pub window_order: Option<bool>,
-    /// Empty plugin configuration (for backward compatibility)
     #[serde(rename = "empty_config", default)]
     pub empty_config: Option<EmptyPluginConfig>,
 }
@@ -127,45 +176,46 @@ pub struct SingletonConfig {
     pub app_id: Option<String>,
 }
 
+/// Helper type to deserialize String or Vec<String>
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum StringOrVec {
+    String(String),
+    Vec(Vec<String>),
+}
+
+impl StringOrVec {
+    fn into_vec(self) -> Vec<String> {
+        match self {
+            StringOrVec::String(s) => vec![s],
+            StringOrVec::Vec(v) => v,
+        }
+    }
+}
+
 /// Window rule configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowRuleConfig {
-    /// Regex pattern to match app_id (optional)
-    pub app_id: Option<String>,
-    /// Regex pattern to match title (optional)
-    pub title: Option<String>,
+    /// Regex pattern(s) to match app_id (optional, can be a string or list of strings)
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
+    pub app_id: Option<Vec<String>>,
+    /// Regex pattern(s) to match title (optional, can be a string or list of strings)
+    #[serde(default, deserialize_with = "deserialize_string_or_vec")]
+    pub title: Option<Vec<String>>,
     /// Workspace to move matching windows to (name or idx, optional if focus_command is specified)
     pub open_on_workspace: Option<String>,
     /// Command to execute when a matching window is focused (optional)
     pub focus_command: Option<String>,
 }
 
-/// Window rule plugin config (for internal use)
-#[derive(Debug, Clone)]
-pub struct WindowRulePluginConfig {
-    /// List of window rules
-    pub rules: Vec<WindowRuleConfig>,
-}
-
-impl Default for WindowRulePluginConfig {
-    fn default() -> Self {
-        Self { rules: Vec::new() }
-    }
-}
-
-/// Empty plugin config (for backward compatibility and internal use)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EmptyPluginConfig {
-    /// Map of workspace identifier to command to execute when workspace is empty
-    pub workspaces: std::collections::HashMap<String, String>,
-}
-
-impl Default for EmptyPluginConfig {
-    fn default() -> Self {
-        Self {
-            workspaces: std::collections::HashMap::new(),
-        }
-    }
+fn deserialize_string_or_vec<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    // Handle missing field case - deserialize as Option first
+    let opt: Option<StringOrVec> = Option::deserialize(deserializer)?;
+    Ok(opt.map(|sov| sov.into_vec()))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -197,8 +247,8 @@ impl Default for ScratchpadDefaults {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScratchpadConfig {
-    /// Direction from which the scratchpad appears (e.g., "fromTop", "fromBottom", "fromLeft", "fromRight")
-    pub direction: String,
+    /// Direction from which the scratchpad appears
+    pub direction: Direction,
     /// Command to execute the application (can include environment variables and arguments)
     pub command: String,
     /// Explicit app_id to match windows (required)
@@ -237,6 +287,8 @@ impl ScratchpadConfig {
 }
 
 impl Config {
+    /// Load configuration from file
+    /// This is the only method that should be used to load config
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
 
@@ -259,62 +311,6 @@ impl Config {
             .with_context(|| format!("Failed to parse config file: {:?}", path))?;
 
         Ok(config)
-    }
-
-    pub fn get_scratchpad(&self, name: &str) -> Option<&ScratchpadConfig> {
-        self.scratchpads.get(name)
-    }
-
-    pub fn get_singleton(&self, name: &str) -> Option<&SingletonConfig> {
-        self.singleton.get(name)
-    }
-
-    pub fn get_window_order(&self, app_id: &str) -> u32 {
-        // Check weights in top-level [window_order]
-        if let Some(&order) = self.window_order.get(app_id) {
-            return order;
-        }
-
-        // Check for partial matches
-        for (config_key, &order) in &self.window_order {
-            if app_id.contains(config_key) || config_key.contains(app_id) {
-                return order;
-            }
-        }
-
-        self.piri.window_order.default_weight
-    }
-
-    pub fn get_window_rule_plugin_config(&self) -> Option<WindowRulePluginConfig> {
-        if !self.window_rule.is_empty() {
-            return Some(WindowRulePluginConfig {
-                rules: self.window_rule.clone(),
-            });
-        }
-        None
-    }
-
-    pub fn get_empty_plugin_config(&self) -> Option<EmptyPluginConfig> {
-        if !self.empty.is_empty() {
-            let mut workspaces = std::collections::HashMap::new();
-            for (workspace, config) in &self.empty {
-                workspaces.insert(workspace.clone(), config.command.clone());
-            }
-            return Some(EmptyPluginConfig { workspaces });
-        }
-        self.piri.plugins.empty_config.clone()
-    }
-
-    pub fn is_window_order_event_listener_enabled(&self) -> bool {
-        self.piri.window_order.enable_event_listener
-    }
-
-    pub fn get_window_order_default_weight(&self) -> u32 {
-        self.piri.window_order.default_weight
-    }
-
-    pub fn get_window_order_workspaces(&self) -> Vec<String> {
-        self.piri.window_order.workspaces.clone()
     }
 }
 
@@ -362,8 +358,8 @@ impl TryFrom<toml::Table> for ScratchpadConfig {
         let direction = table
             .get("direction")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing 'direction' field"))?
-            .to_string();
+            .ok_or_else(|| anyhow::anyhow!("Missing 'direction' field"))
+            .and_then(|s| Direction::from_str(s))?;
 
         let command = table
             .get("command")

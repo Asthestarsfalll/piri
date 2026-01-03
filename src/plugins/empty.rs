@@ -1,317 +1,114 @@
 use anyhow::Result;
-use log::{debug, info, warn};
+use log::info;
 use niri_ipc::Event;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
-use crate::config::EmptyPluginConfig;
+use serde::{Deserialize, Serialize};
+
+use crate::config::Config;
 use crate::niri::NiriIpc;
-use crate::plugins::window_utils;
+use crate::plugins::{window_utils, FromConfig};
 
-/// Empty plugin that executes commands when switching to empty workspaces
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EmptyPluginConfig {
+    pub workspaces: HashMap<String, String>,
+}
+
+impl FromConfig for EmptyPluginConfig {
+    fn from_config(config: &Config) -> Option<Self> {
+        let workspaces = if !config.empty.is_empty() {
+            let mut workspaces = HashMap::new();
+            for (workspace, cfg) in &config.empty {
+                workspaces.insert(workspace.clone(), cfg.command.clone());
+            }
+            workspaces
+        } else {
+            config
+                .piri
+                .plugins
+                .empty_config
+                .clone()
+                .map(|c| c.workspaces)
+                .unwrap_or_default()
+        };
+
+        if workspaces.is_empty() {
+            None
+        } else {
+            Some(EmptyPluginConfig { workspaces })
+        }
+    }
+}
+
 pub struct EmptyPlugin {
     niri: NiriIpc,
-    /// Shared config that can be updated without restarting the event listener
-    config: Arc<Mutex<EmptyPluginConfig>>,
-    /// Last focused workspace (idx as string for comparison)
-    last_workspace: Arc<Mutex<Option<String>>>,
-    /// Map of workspace identifier to whether it's empty (per-workspace state)
-    workspace_empty: Arc<Mutex<HashMap<String, bool>>>,
+    config: EmptyPluginConfig,
 }
 
 impl EmptyPlugin {
-    pub fn new() -> Self {
-        Self {
-            niri: NiriIpc::new(None),
-            config: Arc::new(Mutex::new(EmptyPluginConfig::default())),
-            last_workspace: Arc::new(Mutex::new(None)),
-            workspace_empty: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
+    async fn handle_event_internal(&self, event: &Event) -> Result<()> {
+        let (id, focused) = match event {
+            Event::WorkspaceActivated { id, focused } => (*id, *focused),
+            _ => return Ok(()),
+        };
 
-    /// Handle a single event (internal implementation)
-    async fn handle_event_internal(&self, event: &Event, niri: &NiriIpc) -> Result<()> {
-        match event {
-            Event::WorkspaceActivated { id, focused } => {
-                if !focused {
-                    // Only process when workspace is focused
-                    return Ok(());
-                }
-
-                debug!(
-                    "Received WorkspaceActivated event: id={}, focused={}",
-                    id, focused
-                );
-
-                // WorkspaceActivated only gives us the workspace id, not the full workspace info
-                // We need to query the current workspace state to determine idx and if it's empty
-                match niri.get_workspaces().await {
-                    Ok(workspaces) => {
-                        // Find the workspace with matching id
-                        if let Some(focused_ws) =
-                            workspaces.into_iter().find(|ws| ws.id == *id && ws.is_focused)
-                        {
-                            let workspace_key = focused_ws.idx.to_string();
-                            let is_empty = focused_ws.active_window_id.is_none();
-
-                            debug!("WorkspaceActivated - Current workspace: id={}, idx={}, name={:?}, is_empty={}, active_window_id={:?}", 
-                                   focused_ws.id, focused_ws.idx, focused_ws.name, is_empty, focused_ws.active_window_id);
-
-                            // WorkspaceActivated event means workspace has switched
-                            // Update last workspace
-                            let mut last_ws = self.last_workspace.lock().await;
-                            let old_workspace = last_ws.clone();
-                            *last_ws = Some(workspace_key.clone());
-                            drop(last_ws);
-
-                            info!(
-                                "Workspace activated: {:?} -> {} (is_empty={})",
-                                old_workspace, workspace_key, is_empty
-                            );
-
-                            // Update empty state
-                            self.workspace_empty
-                                .lock()
-                                .await
-                                .insert(workspace_key.clone(), is_empty);
-
-                            // Execute command if workspace is empty
-                            if is_empty {
-                                // Get current config (may have been updated)
-                                // Try exact match: first by name, then by idx
-                                let mut command_found = false;
-
-                                // First: exact name match
-                                if let Some(name) = &focused_ws.name {
-                                    let config_guard = self.config.lock().await;
-                                    if let Some(command) = config_guard.workspaces.get(name) {
-                                        let cmd = command.clone();
-                                        drop(config_guard);
-                                        info!("Workspace {} (name: {}) matched by exact name, executing command: {}", 
-                                                  workspace_key, name, cmd);
-                                        Self::execute_command(&workspace_key, &cmd).await?;
-                                        command_found = true;
-                                    } else {
-                                        drop(config_guard);
-                                    }
-                                }
-
-                                // Second: exact idx match (if name match failed)
-                                if !command_found {
-                                    let config_guard = self.config.lock().await;
-                                    if let Some(command) =
-                                        config_guard.workspaces.get(&workspace_key)
-                                    {
-                                        let cmd = command.clone();
-                                        drop(config_guard);
-                                        info!("Workspace {} matched by exact idx, executing command: {}", 
-                                                  workspace_key, cmd);
-                                        Self::execute_command(&workspace_key, &cmd).await?;
-                                        command_found = true;
-                                    } else {
-                                        drop(config_guard);
-                                    }
-                                }
-
-                                if !command_found {
-                                    debug!("Workspace {} (name: {:?}) is empty (WorkspaceActivated), trying name/idx matching", 
-                                              workspace_key, focused_ws.name);
-                                    Self::try_match_and_execute(
-                                        &workspace_key,
-                                        true,
-                                        niri,
-                                        &self.config,
-                                        &self.workspace_empty,
-                                    )
-                                    .await?;
-                                }
-                            }
-                        } else {
-                            debug!(
-                                "WorkspaceActivated: workspace with id {} not found or not focused",
-                                id
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        debug!("WorkspaceActivated: failed to get workspaces: {}", e);
-                    }
-                }
-            }
-            other => {
-                // Log other events for debugging
-                debug!("Received other event: {:?}", other);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Try to match workspace by exact name or idx, then execute if empty
-    async fn try_match_and_execute(
-        workspace_key: &str,
-        is_empty: bool,
-        _niri: &NiriIpc,
-        config: &Arc<Mutex<EmptyPluginConfig>>,
-        workspace_empty: &Arc<Mutex<HashMap<String, bool>>>,
-    ) -> Result<()> {
-        if !is_empty {
-            debug!(
-                "Workspace {} is not empty, skipping matching",
-                workspace_key
-            );
-            workspace_empty.lock().await.insert(workspace_key.to_string(), false);
+        if !focused {
             return Ok(());
         }
 
-        let config_guard = config.lock().await;
-        let workspaces_map = config_guard.workspaces.clone();
-        drop(config_guard);
+        if let Some(focused_ws) =
+            window_utils::get_focused_workspace_from_event(&self.niri, id).await?
+        {
+            let workspace_key = focused_ws.idx.to_string();
+            let is_empty = window_utils::is_workspace_empty(&self.niri, focused_ws.id).await?;
 
-        debug!(
-            "Trying to match workspace '{}' against {} configured rules",
-            workspace_key,
-            workspaces_map.len()
-        );
+            if is_empty {
+                let command_opt = focused_ws
+                    .name
+                    .as_ref()
+                    .and_then(|name| self.config.workspaces.get(name))
+                    .or_else(|| self.config.workspaces.get(&workspace_key));
 
-        // First pass: exact name match
-        debug!("First pass: trying exact name matching");
-        for (key, command) in &workspaces_map {
-            // Exact name match only
-            if key == workspace_key {
-                info!(
-                    "Workspace {} matched by exact name with config key '{}', executing command: {}",
-                    workspace_key, key, command
-                );
-                Self::execute_command(workspace_key, command).await?;
-                workspace_empty.lock().await.insert(workspace_key.to_string(), true);
-                return Ok(());
-            }
-        }
-
-        // Second pass: exact idx match
-        debug!("Second pass: trying exact idx matching");
-        if let Ok(workspace_idx) = workspace_key.parse::<u8>() {
-            for (key, command) in &workspaces_map {
-                if let Ok(key_idx) = key.parse::<u8>() {
-                    if key_idx == workspace_idx {
-                        info!(
-                            "Workspace {} matched by exact idx with config key '{}', executing command: {}",
-                            workspace_key, key, command
-                        );
-                        Self::execute_command(workspace_key, command).await?;
-                        workspace_empty.lock().await.insert(workspace_key.to_string(), true);
-                        return Ok(());
-                    }
+                if let Some(cmd) = command_opt {
+                    info!(
+                        "Workspace {} matches empty rule, executing: {}",
+                        workspace_key, cmd
+                    );
+                    window_utils::execute_command(cmd)?;
                 }
             }
         }
 
-        debug!("No matching rule found for workspace '{}'", workspace_key);
-        Ok(())
-    }
-
-    /// Execute command
-    async fn execute_command(workspace_key: &str, command: &str) -> Result<()> {
-        info!(
-            "Executing command for empty workspace {}: {}",
-            workspace_key, command
-        );
-
-        window_utils::execute_command(command)?;
-
-        info!(
-            "Command executed successfully for workspace {}",
-            workspace_key
-        );
         Ok(())
     }
 }
 
 #[async_trait::async_trait]
 impl crate::plugins::Plugin for EmptyPlugin {
-    fn name(&self) -> &str {
-        "empty"
-    }
+    type Config = EmptyPluginConfig;
 
-    async fn init(&mut self, niri: NiriIpc, config: &crate::config::Config) -> Result<()> {
-        // Store niri instance first, then clone from self for the async task
-        self.niri = niri;
-
-        // Get empty plugin config (converts new format to old format)
-        if let Some(empty_config) = config.get_empty_plugin_config() {
-            *self.config.lock().await = empty_config;
-        }
-
-        let config_guard = self.config.lock().await;
-        let rule_count = config_guard.workspaces.len();
-
+    fn new(niri: NiriIpc, config: EmptyPluginConfig) -> Self {
         info!(
-            "Empty plugin initialized with {} workspace rules",
-            rule_count
+            "Empty plugin initialized with {} rules",
+            config.workspaces.len()
         );
-
-        // Log all configured workspace rules
-        if !config_guard.workspaces.is_empty() {
-            info!("Configured workspace rules:");
-            for (workspace, command) in &config_guard.workspaces {
-                info!("  - {}: {}", workspace, command);
-            }
-        } else {
-            warn!("Empty plugin initialized but no workspace rules configured");
-        }
-        drop(config_guard);
-
-        // Event listener is now handled by PluginManager
-        Ok(())
+        Self { niri, config }
     }
 
-    async fn shutdown(&mut self) -> Result<()> {
-        // Shutdown is handled by runtime
-        info!("Empty plugin shutdown");
-        Ok(())
-    }
-
-    async fn handle_event(&mut self, event: &Event, niri: &NiriIpc) -> Result<()> {
-        self.handle_event_internal(event, niri).await
+    async fn handle_event(&mut self, event: &Event, _niri: &NiriIpc) -> Result<()> {
+        self.handle_event_internal(event).await
     }
 
     fn is_interested_in_event(&self, event: &Event) -> bool {
         matches!(event, Event::WorkspaceActivated { .. })
     }
 
-    async fn update_config(&mut self, niri: NiriIpc, config: &crate::config::Config) -> Result<()> {
-        info!("Updating empty plugin configuration");
-
-        // Update niri instance
-        self.niri = niri;
-
-        // Get new empty plugin config
-        let mut config_guard = self.config.lock().await;
-        let old_count = config_guard.workspaces.len();
-
-        if let Some(empty_config) = config.get_empty_plugin_config() {
-            *config_guard = empty_config;
-        }
-
-        let new_count = config_guard.workspaces.len();
+    async fn update_config(&mut self, config: EmptyPluginConfig) -> Result<()> {
         info!(
-            "Empty plugin config updated: {} -> {} workspace rules",
-            old_count, new_count
+            "Updating empty plugin configuration: {} rules",
+            config.workspaces.len()
         );
-
-        // Log all configured workspace rules
-        if !config_guard.workspaces.is_empty() {
-            info!("Updated workspace rules:");
-            for (workspace, command) in &config_guard.workspaces {
-                info!("  - {}: {}", workspace, command);
-            }
-        } else {
-            warn!("Empty plugin config updated but no workspace rules configured");
-        }
-        drop(config_guard);
-
+        self.config = config;
         Ok(())
     }
 }

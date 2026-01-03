@@ -7,10 +7,17 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use crate::utils::send_notification;
+
 /// Wrapper for niri IPC communication
+#[derive(Clone)]
 pub struct NiriIpc {
-    socket_path: Option<PathBuf>,
-    socket: Arc<Mutex<Option<Socket>>>,
+    inner: Arc<NiriIpcInner>,
+}
+
+struct NiriIpcInner {
+    socket_path: Mutex<Option<PathBuf>>,
+    socket: Mutex<Option<Socket>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,14 +81,35 @@ impl NiriIpc {
         let path = socket_path.map(PathBuf::from);
 
         Self {
-            socket_path: path,
-            socket: Arc::new(Mutex::new(None)),
+            inner: Arc::new(NiriIpcInner {
+                socket_path: Mutex::new(path),
+                socket: Mutex::new(None),
+            }),
+        }
+    }
+
+    /// Update socket path and clear existing connection if it changed
+    pub fn update_socket_path(&self, socket_path: Option<String>) {
+        let new_path = socket_path.map(PathBuf::from);
+        let mut path_guard = self.inner.socket_path.lock().unwrap();
+        if *path_guard != new_path {
+            log::info!(
+                "Niri socket path changed: {:?} -> {:?}",
+                *path_guard,
+                new_path
+            );
+            *path_guard = new_path;
+            if let Ok(mut socket_guard) = self.inner.socket.lock() {
+                *socket_guard = None;
+            }
         }
     }
 
     /// Connect to niri socket
     fn connect_internal(&self) -> Result<Socket> {
-        let socket = if let Some(ref path) = self.socket_path {
+        let path_guard =
+            self.inner.socket_path.lock().map_err(|_| anyhow::anyhow!("Mutex poisoned"))?;
+        let socket = if let Some(ref path) = *path_guard {
             Socket::connect_to(path).context("Failed to connect to niri socket")?
         } else {
             Socket::connect().context("Failed to connect to niri socket")?
@@ -93,7 +121,8 @@ impl NiriIpc {
     pub async fn send_request(&self, request: Request) -> Result<Response> {
         let niri = self.clone();
         tokio::task::spawn_blocking(move || -> Result<Response> {
-            let mut guard = niri.socket.lock().map_err(|_| anyhow::anyhow!("Mutex poisoned"))?;
+            let mut guard =
+                niri.inner.socket.lock().map_err(|_| anyhow::anyhow!("Mutex poisoned"))?;
             if guard.is_none() {
                 *guard = Some(niri.connect_internal()?);
             }
@@ -134,7 +163,8 @@ impl NiriIpc {
     {
         let niri = self.clone();
         tokio::task::spawn_blocking(move || {
-            let mut guard = niri.socket.lock().map_err(|_| anyhow::anyhow!("Mutex poisoned"))?;
+            let mut guard =
+                niri.inner.socket.lock().map_err(|_| anyhow::anyhow!("Mutex poisoned"))?;
 
             // Ensure we have a connection
             if guard.is_none() {
@@ -295,7 +325,7 @@ impl NiriIpc {
 
     /// Focus a window by ID
     pub async fn focus_window(&self, window_id: u64) -> Result<()> {
-        log::info!("Focusing window {}", window_id);
+        log::debug!("Focusing window {}", window_id);
         self.send_action(Action::FocusWindow { id: window_id }).await
     }
 
@@ -412,21 +442,22 @@ impl NiriIpc {
     }
 
     /// Get output dimensions (width and height) for focused output
-    pub async fn get_output_dimensions(&self) -> Result<(u32, u32)> {
-        match self.get_focused_output().await {
-            Ok(output) => {
-                if let Some(logical) = output.logical {
-                    Ok((logical.width, logical.height))
-                } else {
-                    // Fallback to default dimensions
-                    Ok((1920, 1080))
-                }
-            }
-            Err(_) => {
-                // Fallback to default dimensions if query fails
-                Ok((1920, 1080))
-            }
-        }
+    pub async fn get_output_size(&self) -> Result<(u32, u32)> {
+        let output = self.get_focused_output().await?;
+        let logical = output.logical.ok_or_else(|| {
+            send_notification(
+                "piri",
+                &format!(
+                    "Focused output '{}' does not have logical size",
+                    output.name
+                ),
+            );
+            anyhow::anyhow!(
+                "Focused output '{}' does not have logical size",
+                output.name
+            )
+        })?;
+        Ok((logical.width, logical.height))
     }
     /// Returns (x, y, width, height) if available
     /// For floating windows, extracts position from layout.tile_pos_in_workspace_view
@@ -480,15 +511,5 @@ impl NiriIpc {
         }
 
         Ok(socket)
-    }
-}
-
-// Make NiriIpc cloneable for async use
-impl Clone for NiriIpc {
-    fn clone(&self) -> Self {
-        Self {
-            socket_path: self.socket_path.clone(),
-            socket: self.socket.clone(),
-        }
     }
 }

@@ -82,6 +82,16 @@ focus_command = "notify-send 'Chrome focused'"
 app_id = "^code$"
 open_on_workspace = "dev"
 
+# Example: app_id as a list (any one matches)
+[[window_rule]]
+app_id = ["code", "code-oss", "codium"]
+open_on_workspace = "dev"
+
+# Example: title as a list (any one matches)
+[[window_rule]]
+title = ".*Chrome.*"
+open_on_workspace = "browser"
+
 [singleton.browser]
 command = 'google-chrome-stable'
 

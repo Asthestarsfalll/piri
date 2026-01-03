@@ -9,7 +9,7 @@ use crate::commands::CommandHandler;
 use crate::ipc::{handle_request, IpcServer};
 use crate::niri::NiriIpc;
 use crate::plugins::PluginManager;
-use crate::utils::{send_notification, set_process_name};
+use crate::utils::send_notification;
 use niri_ipc::Event;
 use tokio::sync::mpsc;
 
@@ -35,15 +35,38 @@ async fn start_config_watcher(
 
     watcher.watch(&config_path, RecursiveMode::NonRecursive)?;
 
-    // Spawn a task to handle reload signals
+    // Spawn a task to handle reload signals with debounce
     tokio::spawn(async move {
         // Keep watcher alive
         let _watcher = watcher;
 
-        while let Some(_) = rx.recv().await {
+        loop {
+            // Wait for first event
+            if rx.recv().await.is_none() {
+                break;
+            }
+
+            // Debounce: wait for 300ms, if new events arrive, reset the timer
+            let debounce_timer = tokio::time::sleep(tokio::time::Duration::from_millis(300));
+            tokio::pin!(debounce_timer);
+            loop {
+                tokio::select! {
+                    _ = debounce_timer.as_mut() => {
+                        // No new events during debounce period, proceed with reload
+                        break;
+                    }
+                    result = rx.recv() => {
+                        if result.is_none() {
+                            // Channel closed
+                            return;
+                        }
+                        // New event arrived, reset debounce timer
+                        debounce_timer.set(tokio::time::sleep(tokio::time::Duration::from_millis(300)));
+                    }
+                }
+            }
+
             info!("Config file modified, reloading...");
-            // Add a small delay to avoid partial reads if multiple modify events fire
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
             let mut h = handler.lock().await;
             let path = h.config_path().clone();
@@ -52,13 +75,16 @@ async fn start_config_watcher(
                 send_notification("piri", &format!("Auto-reload failed: {}", e));
             } else {
                 let config = h.config().clone();
-                let niri_clone = niri.clone();
+                // Update existing NiriIpc instance in case socket_path changed
+                niri.update_socket_path(config.niri.socket_path.clone());
+
                 let mut pm = plugin_manager.lock().await;
-                if let Err(e) = pm.init(niri_clone, &config).await {
+                if let Err(e) = pm.init(niri.clone(), &config).await {
                     error!("Failed to reinitialize plugins after auto-reload: {}", e);
                     send_notification("piri", &format!("Plugin reinit failed: {}", e));
                 } else {
                     info!("Config auto-reloaded successfully");
+                    send_notification("piri", "Configuration hot-reloaded successfully");
                 }
             }
         }
@@ -75,18 +101,13 @@ async fn run_daemon_loop(
     mut event_rx: mpsc::UnboundedReceiver<Event>,
     niri: NiriIpc,
 ) -> Result<()> {
-    eprintln!("[DAEMON] run_daemon_loop: Starting...");
-
     // Shared shutdown flag
     let shutdown = Arc::new(tokio::sync::Notify::new());
     let shutdown_clone = shutdown.clone();
 
-    eprintln!("[DAEMON] run_daemon_loop: Setting up signal handlers...");
     // Setup signal handlers
     let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())?;
     let mut sigint = signal::unix::signal(signal::unix::SignalKind::interrupt())?;
-
-    eprintln!("[DAEMON] run_daemon_loop: Entering main loop, waiting for connections...");
 
     // Main daemon loop with unified event distribution
     loop {
@@ -141,13 +162,6 @@ async fn run_daemon_loop(
         }
     }
 
-    // Shutdown plugins (optional - runtime shutdown will cancel all tasks anyway)
-    // But we call it for any cleanup plugins might need
-    info!("Shutting down plugins...");
-    if let Err(e) = plugin_manager.lock().await.shutdown().await {
-        warn!("Error shutting down plugins: {}", e);
-    }
-
     // Cleanup socket
     ipc_server.cleanup();
     info!("Daemon stopped");
@@ -156,26 +170,21 @@ async fn run_daemon_loop(
 
 /// Run daemon (internal function, can be called with or without daemonizing)
 async fn run_daemon(mut handler: CommandHandler) -> Result<()> {
-    eprintln!("[DAEMON] run_daemon: Creating IPC server...");
     info!("Creating IPC server...");
 
     // Create IPC server
     // If this fails, error will be visible on stderr (which is still open in daemon mode)
     let ipc_server = match IpcServer::new(None).await {
         Ok(server) => {
-            eprintln!("[DAEMON] run_daemon: IPC server created successfully");
             info!("IPC server created successfully");
             server
         }
         Err(e) => {
             let error_msg = format!("Failed to create IPC server: {}. Check permissions for socket directory and ensure no other daemon is running.", e);
-            eprintln!("[DAEMON] ERROR: {}", error_msg);
-            eprintln!("{}", error_msg);
             return Err(anyhow::anyhow!(error_msg));
         }
     };
 
-    eprintln!("[DAEMON] run_daemon: Initializing plugins...");
     info!("Initializing plugins...");
 
     // Initialize plugin manager
@@ -209,46 +218,20 @@ async fn run_daemon(mut handler: CommandHandler) -> Result<()> {
         warn!("Failed to start config watcher: {}", e);
     }
 
-    eprintln!("[DAEMON] run_daemon: Setting up signal handlers...");
     info!("Setting up signal handlers...");
-
-    // If we're running as a daemon (marked by PIRI_DAEMON env var),
-    // DON'T close stderr - keep it open for debugging
-    // We'll keep stderr open so errors are always visible
-    if std::env::var("PIRI_DAEMON").is_ok() {
-        eprintln!("[DAEMON] run_daemon: IPC server started successfully, keeping stderr open for debugging");
-        info!("IPC server started successfully");
-        // Don't close stderr - keep it for debugging
-        // unsafe {
-        //     let _ = libc::close(2); // stderr
-        // }
-    }
-
-    eprintln!("[DAEMON] run_daemon: Starting daemon main loop...");
     info!("Starting daemon main loop...");
 
     // Set process name again before entering main loop
     // This ensures the name is set even if tokio changed it
-    set_process_name("piri");
+    // set_process_name("piri");
 
-    eprintln!("[DAEMON] run_daemon: About to enter run_daemon_loop");
-    let result = run_daemon_loop(ipc_server, handler, plugin_manager, event_rx, niri).await;
-    eprintln!(
-        "[DAEMON] run_daemon: run_daemon_loop returned: {:?}",
-        result
-    );
-    result
+    run_daemon_loop(ipc_server, handler, plugin_manager, event_rx, niri).await
 }
 
 /// Run daemon
 pub async fn run(handler: CommandHandler) -> Result<()> {
-    set_process_name("piri");
-
-    if std::env::var("PIRI_DAEMON").is_ok() {
-        info!("Starting piri daemon (daemonized mode)");
-    } else {
-        info!("Starting piri daemon");
-    }
+    // set_process_name("piri");
+    info!("Starting piri daemon");
 
     run_daemon(handler).await
 }

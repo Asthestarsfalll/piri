@@ -21,16 +21,15 @@ if ! command -v cargo &> /dev/null; then
     exit 1
 fi
 
-# 检查是否以 root 运行（用于系统级安装）
+CONFIG_DIR="$HOME/.config/niri"
+
 if [ "$EUID" -eq 0 ]; then
     INSTALL_PREFIX="/usr/local"
     BIN_DIR="$INSTALL_PREFIX/bin"
-    CONFIG_DIR="/etc/niri"
     USE_SUDO=""
 else
     INSTALL_PREFIX="$HOME/.local"
     BIN_DIR="$INSTALL_PREFIX/bin"
-    CONFIG_DIR="$HOME/.config/niri"
     USE_SUDO=""
 fi
 

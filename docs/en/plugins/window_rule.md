@@ -41,12 +41,22 @@ open_on_workspace = "2"
 [[window_rule]]
 app_id = "^code$"
 open_on_workspace = "dev"
+
+# app_id as a list (any one matches)
+[[window_rule]]
+app_id = ["code", "code-oss", "codium"]
+open_on_workspace = "dev"
+
+# title as a list (any one matches)
+[[window_rule]]
+title = [".*Chrome.*", ".*Chromium.*", ".*Google Chrome.*"]
+open_on_workspace = "browser"
 ```
 
 ## Configuration Fields
 
-- **`app_id`** (optional): Regular expression pattern to match window `app_id`
-- **`title`** (optional): Regular expression pattern to match window title
+- **`app_id`** (optional): Regular expression pattern(s) to match window `app_id`. Can be a string or a list of strings. If a list is provided, any pattern that matches will trigger the rule.
+- **`title`** (optional): Regular expression pattern(s) to match window title. Can be a string or a list of strings. If a list is provided, any pattern that matches will trigger the rule.
 - **`open_on_workspace`** (optional): Target workspace identifier (name or index)
 - **`focus_command`** (optional): Command to execute when the window gains focus
 
@@ -54,6 +64,7 @@ open_on_workspace = "dev"
 - At least one of `app_id` or `title` must be specified
 - At least one of `open_on_workspace` or `focus_command` must be specified
 - If both `app_id` and `title` are specified, either match works (OR logic)
+- `app_id` and `title` can be either a single string or a list of strings. When a list is provided, any pattern in the list that matches will trigger the rule
 
 > **Reference**: For detailed information about the window matching mechanism, see [Window Matching Mechanism](../window_matching.md)
 
@@ -78,6 +89,7 @@ The plugin listens for `WindowOpenedOrChanged` events:
 
 - ✅ **Regular Expressions**: Supports full regular expression syntax
 - ✅ **Flexible Matching**: Supports `app_id` or `title`, or both combined (OR logic)
+- ✅ **List Support**: `app_id` and `title` can be lists of patterns, any one match triggers the rule
 - ✅ **Regex Caching**: Compiled regular expressions are cached for better performance
 - ✅ **Hot Config Reload**: Supports configuration updates without restarting the daemon
 

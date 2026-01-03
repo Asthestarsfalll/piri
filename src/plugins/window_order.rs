@@ -4,39 +4,86 @@ use log::{debug, info, warn};
 use niri_ipc::{Action, Event};
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::config::Config;
 use crate::ipc::IpcRequest;
 use crate::niri::NiriIpc;
+use crate::plugins::FromConfig;
+
+/// Window order plugin config (for internal use)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowOrderPluginConfig {
+    /// Map of app_id to order weight
+    pub window_order: HashMap<String, u32>,
+    /// Default weight for unconfigured windows
+    pub default_weight: u32,
+    /// Enable event listener for automatic reordering
+    pub enable_event_listener: bool,
+    /// List of workspaces to apply ordering to (empty = all workspaces)
+    pub workspaces: Vec<String>,
+}
+
+impl Default for WindowOrderPluginConfig {
+    fn default() -> Self {
+        Self {
+            window_order: HashMap::new(),
+            default_weight: 0,
+            enable_event_listener: false,
+            workspaces: Vec::new(),
+        }
+    }
+}
+
+impl FromConfig for WindowOrderPluginConfig {
+    fn from_config(config: &Config) -> Option<Self> {
+        if config.window_order.is_empty() {
+            None
+        } else {
+            Some(Self {
+                window_order: config.window_order.clone(),
+                default_weight: config.piri.window_order.default_weight,
+                enable_event_listener: config.piri.window_order.enable_event_listener,
+                workspaces: config.piri.window_order.workspaces.clone(),
+            })
+        }
+    }
+}
 
 /// Window order plugin that reorders windows in workspace based on configuration
 pub struct WindowOrderPlugin {
     niri: NiriIpc,
-    config: Config,
+    config: WindowOrderPluginConfig,
 }
 
 impl WindowOrderPlugin {
-    pub fn new() -> Self {
-        Self {
-            niri: NiriIpc::new(None),
-            config: Config::default(),
-        }
-    }
-
     /// Get order value for a window based on its app_id
     /// Uses configured weight if exists, otherwise uses default_weight from config
-    fn get_window_order(&self, app_id: Option<&String>) -> u32 {
+    fn get_window_order(
+        app_id: Option<&String>,
+        window_order: &HashMap<String, u32>,
+        default_weight: u32,
+    ) -> u32 {
         if let Some(app_id) = app_id {
-            self.config.get_window_order(app_id)
-        } else {
-            self.config.get_window_order_default_weight()
+            // Check weights in window_order map
+            if let Some(&order) = window_order.get(app_id) {
+                return order;
+            }
+
+            // Check for partial matches
+            for (config_key, &order) in window_order {
+                if app_id.contains(config_key) || config_key.contains(app_id) {
+                    return order;
+                }
+            }
         }
+
+        default_weight
     }
 
     /// Check if window ordering should be applied to the given workspace
     /// Returns true if workspaces list is empty (apply to all) or if workspace matches
-    fn should_apply_to_workspace(&self, workspace_name: &str) -> bool {
-        let workspaces = self.config.get_window_order_workspaces();
-
+    fn should_apply_to_workspace(workspace_name: &str, workspaces: Vec<String>) -> bool {
         debug!(
             "Checking if window ordering should apply to workspace '{}', configured workspaces: {:?}",
             workspace_name, workspaces
@@ -49,7 +96,7 @@ impl WindowOrderPlugin {
         }
 
         // Try to match workspace by exact name or idx
-        for configured_ws in workspaces {
+        for configured_ws in workspaces.iter() {
             // Exact name match
             if configured_ws == workspace_name {
                 debug!(
@@ -84,6 +131,9 @@ impl WindowOrderPlugin {
     /// This method does not check workspace filtering - it always applies to the current workspace
     async fn reorder_windows(&self) -> Result<()> {
         info!("Reordering windows in current workspace");
+
+        let window_order = &self.config.window_order;
+        let default_weight = self.config.default_weight;
 
         // Get current focused workspace
         let current_workspace = self.niri.get_focused_workspace().await?;
@@ -152,10 +202,11 @@ impl WindowOrderPlugin {
         let current_col_map: HashMap<u64, usize> =
             current_positions.iter().map(|(id, col, _)| (*id, *col)).collect();
 
+        // Get window orders
         let mut windows_with_order: Vec<_> = workspace_windows
             .iter()
             .map(|w| {
-                let order = self.get_window_order(w.app_id.as_ref());
+                let order = Self::get_window_order(w.app_id.as_ref(), window_order, default_weight);
                 let current_col = current_col_map.get(&w.id).copied().unwrap_or(0);
                 (w.id, order, current_col, w.app_id.clone())
             })
@@ -463,33 +514,22 @@ impl WindowOrderPlugin {
 
 #[async_trait]
 impl crate::plugins::Plugin for WindowOrderPlugin {
-    fn name(&self) -> &str {
-        "window_order"
+    type Config = WindowOrderPluginConfig;
+
+    fn new(niri: NiriIpc, config: WindowOrderPluginConfig) -> Self {
+        info!(
+            "WindowOrder plugin initialized with {} rules",
+            config.window_order.len()
+        );
+        Self { niri, config }
     }
 
-    async fn init(&mut self, niri: NiriIpc, config: &Config) -> Result<()> {
-        self.config = config.clone();
-        self.niri = niri;
-        let weight_count = config.window_order.len();
+    async fn update_config(&mut self, config: WindowOrderPluginConfig) -> Result<()> {
         info!(
-            "WindowOrder plugin initialized with {} window order configurations",
-            weight_count
+            "Updating window_order plugin configuration: {} rules",
+            config.window_order.len()
         );
-        Ok(())
-    }
-
-    async fn update_config(&mut self, _niri: NiriIpc, config: &Config) -> Result<()> {
-        info!("Updating window_order plugin configuration");
-
-        let old_count = self.config.window_order.len();
-        self.config = config.clone();
-        let new_count = self.config.window_order.len();
-
-        info!(
-            "WindowOrder plugin config updated: {} -> {} window order configurations",
-            old_count, new_count
-        );
-
+        self.config = config;
         Ok(())
     }
 
@@ -500,54 +540,29 @@ impl crate::plugins::Plugin for WindowOrderPlugin {
                 self.reorder_windows().await?;
                 Ok(Some(Ok(())))
             }
-            _ => Ok(None), // Not handled by this plugin
+            _ => Ok(None),
         }
     }
 
-    /// Handle niri events to automatically reorder windows
-    /// Only processes events if event listener is enabled in config
-    /// For event-driven reordering, workspace filtering is applied
     async fn handle_event(&mut self, event: &Event, _niri: &NiriIpc) -> Result<()> {
-        // Check if event listener is enabled
-        if !self.config.is_window_order_event_listener_enabled() {
+        if !self.config.enable_event_listener {
             return Ok(());
         }
 
-        // Get current workspace to check if event-driven reordering should apply
         let current_workspace = self.niri.get_focused_workspace().await?;
 
-        // For event-driven reordering, check workspace filtering
-        if !self.should_apply_to_workspace(&current_workspace.name) {
-            debug!(
-                "Window ordering not configured for workspace '{}', skipping event-driven reorder.",
-                current_workspace.name
-            );
+        if !Self::should_apply_to_workspace(&current_workspace.name, self.config.workspaces.clone())
+        {
             return Ok(());
         }
 
-        match event {
-            Event::WindowLayoutsChanged { .. } => {
-                debug!("Received WindowLayoutsChanged event, triggering window reorder");
-                // Use a small delay to ensure layout changes are complete
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                self.reorder_windows().await?;
-            }
-            Event::WindowOpenedOrChanged { .. } => {
-                debug!("Received WindowOpenedOrChanged event, triggering window reorder");
-                // Use a small delay to ensure window is fully opened
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                self.reorder_windows().await?;
-            }
-            _ => {
-                // Other events are not handled
-            }
-        }
+        debug!("Event triggered window reorder: {:?}", event);
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        self.reorder_windows().await?;
 
         Ok(())
     }
 
-    /// Check if plugin is interested in a specific event type
-    /// Only interested in events that might affect window layout
     fn is_interested_in_event(&self, event: &Event) -> bool {
         matches!(
             event,

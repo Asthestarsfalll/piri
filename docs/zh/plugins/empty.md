@@ -25,14 +25,7 @@ command = "firefox"
 command = "code"
 ```
 
-## Workspace 标识符
-
-支持两种标识符类型：
-
-- **name**: Workspace 名称，如 `"main"`, `"work"`
-- **idx**: Workspace 索引（1-based），如 `"1"`, `"2"`
-
-**匹配顺序**：name 优先，然后 idx。插件自动识别类型并支持跨类型匹配。
+> **Workspace 标识符**: 关于 workspace 标识符（name/idx）的详细说明，请参阅 [插件系统通用配置说明](plugins.md#workspace-标识符)
 
 ## 工作原理
 
@@ -44,7 +37,7 @@ command = "code"
 ## 特性
 
 - ✅ **事件驱动**: 实时监听 workspace 切换
-- ✅ **灵活匹配**: 支持 name 和 idx 两种标识符
+- ✅ **灵活匹配**: 支持 name 和 idx 两种标识符（详见上方说明）
 - ✅ **自动检测**: 无需手动触发
 
 ## 使用场景

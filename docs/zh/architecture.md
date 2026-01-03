@@ -1,96 +1,49 @@
 # 架构设计
 
-## 项目结构
+Piri 采用模块化、状态驱动且事件导向的架构，旨在为 Niri 合成器提供高性能、低延迟的扩展能力。
 
-项目采用模块化设计，便于扩展：
+## 核心设计理念
 
-### 核心模块
+### 1. 状态驱动与 Manager 模式
+每个复杂插件（如 Scratchpads, Singleton）都遵循 **State-Manager** 模式：
+- **State 结构体**：聚合了静态配置（来自 TOML）和运行时状态（如 `window_id`、可见性、最后聚焦窗口）。
+- **Manager 结构体**：负责维护 `HashMap<String, State>`，并提供原子化的操作方法。
+- **Plugin 外壳**：实现 `Plugin` trait，负责将 IPC 请求和 Niri 事件映射到 Manager 的具体操作上。
 
-- `main.rs`: 主入口，处理 CLI 命令解析和路由
-- `lib.rs`: 库入口，导出所有公共模块
-- `config.rs`: 配置管理模块，负责加载和解析 TOML 配置文件
-- `niri.rs`: Niri IPC 封装模块，提供与 niri 合成器通信的接口
-- `commands.rs`: 命令处理系统，包含 `CommandHandler` 用于处理 IPC 请求
-- `daemon.rs`: 守护进程管理，负责守护进程的启动、事件循环和生命周期管理
-- `ipc.rs`: 进程间通信模块，实现客户端与守护进程之间的 Unix socket 通信
-- `utils.rs`: 工具函数模块
+### 2. 资源保障机制 (Resource Assurance)
+插件采用“延迟初始化”和“自动恢复”策略。核心方法 `ensure_window_id` 实现了完整的资源保障链路：
+1.  **有效性检查**：检查当前绑定的 `window_id` 是否仍然存在。
+2.  **自动捕获**：如果 ID 失效，根据 `app_id` 模式搜索当前所有窗口进行捕获。
+3.  **自动启动**：如果搜索不到，执行配置的命令并进入“等待-重试”循环直到窗口出现。
+4.  **初始化设置**：一旦获取窗口，立即统一执行浮动设置、大小调整和几何定位。
 
-### 插件系统
+### 3. 智能配置重载 (Smart Config Reload)
+Piri 支持无损的热重载：
+- **配置合并**：重载时，系统会对比新旧配置。如果某个实例（如 Scratchpad）在旧状态中已有关联的 `window_id`，更新配置时会予以保留。
+- **动态保护**：对于通过 IPC 动态添加的资源（标记为 `is_dynamic`），即使它们不在 TOML 配置文件中，重载时也会被智能保留。
+- **缓存清理**：重载后自动清理 `WindowMatcher` 的正则表达式缓存，确保新的匹配规则立即生效。
 
-- `plugins/mod.rs`: 插件系统核心，包含 `Plugin` trait 和 `PluginManager`
-- `plugins/scratchpads.rs`: Scratchpads 插件实现
-- `plugins/empty.rs`: Empty 插件实现
-- `plugins/window_rule.rs`: Window Rule 插件实现
-- `plugins/autofill.rs`: Autofill 插件实现
-- `plugins/singleton.rs`: Singleton 插件实现
-- `plugins/window_order.rs`: Window Order 插件实现
-- `plugins/window_utils.rs`: 窗口匹配和工具函数
+## 核心模块说明
 
-## 工作原理
+### 插件系统 (`src/plugins/`)
+- `mod.rs`: 定义 `Plugin` trait 和统一的事件/IPC 分发总线。
+- `scratchpads.rs`: 核心功能，管理隐藏/显示窗口，支持跨工作区和显示器。
+- `singleton.rs`: 确保特定应用（如浏览器）全局只有一个实例并支持快速切换。
+- `window_rule.rs`: 基于规则的自动化中心，处理窗口自动归位和焦点触发命令。
+- `window_utils.rs`: 几何计算中心与窗口匹配引擎，包含正则表达式缓存池。
 
-### 守护进程架构
+### 通信与事件中心
+- `niri.rs`: 高性能异步 IPC 客户端，封装了所有 Niri 动作。
+- `daemon.rs`: 整个系统的神经中枢，协调事件流分发、信号处理和插件生命周期。
+- `ipc.rs`: 基于 Unix Socket 的内部命令协议。
 
-Piri 使用守护进程架构来提供持续的服务。守护进程在后台运行，监听 niri 事件并执行相应的操作。
+## 性能与健壮性设计
 
-**守护进程启动流程**：
-1. `main.rs` 解析 CLI 命令，如果是 `daemon` 命令则启动守护进程
-2. `daemon.rs` 创建 `CommandHandler` 和 `PluginManager`
-3. 初始化所有启用的插件
-4. 启动统一的事件监听器
-5. 启动 IPC 服务器，监听客户端连接
-6. 进入主事件循环，处理 IPC 请求和 niri 事件
+### 统一去重机制
+针对 Niri 可能发送的密集重复事件（如窗口创建过程中的多次状态变更），Piri 在插件层实现了基于 **窗口 ID + 时间戳** 的全局去重引擎（冷却时间通常为 200ms - 500ms），确保 `focus_command` 等副作用只触发一次。
 
-### IPC 通信
+### 几何计算抽象
+所有关于屏幕边缘（FromTop, FromLeft 等）、边距、百分比大小的数学计算都收拢在 `window_utils.rs` 中。通过一次性获取输出（Output）上下文，减少了与合成器之间的往返延迟。
 
-客户端通过 Unix socket 与守护进程通信，发送命令和接收响应。这允许在不重启守护进程的情况下执行操作。
-
-**IPC 通信流程**：
-1. 客户端通过 `IpcClient` 连接到守护进程的 Unix socket
-2. 发送序列化的 `IpcRequest` 请求
-3. 守护进程的 `IpcServer` 接收请求
-4. `CommandHandler` 处理请求，可能通过插件系统路由
-5. 返回 `IpcResponse` 响应给客户端
-
-### 插件系统
-
-插件系统允许扩展功能。每个插件实现 `Plugin` trait，并在守护进程启动时自动加载。
-
-**插件生命周期**：
-1. **初始化**：守护进程启动时，`PluginManager` 根据配置初始化所有启用的插件
-2. **事件处理**：插件通过 `handle_event` 方法接收 niri 事件
-3. **IPC 请求处理**：插件可以通过 `handle_ipc_request` 方法处理客户端请求
-4. **配置更新**：支持热重载配置，插件通过 `update_config` 方法更新配置
-5. **关闭**：守护进程关闭时，调用插件的 `shutdown` 方法进行清理
-
-#### 统一事件分发机制
-
-Piri 使用统一的事件分发机制来优化性能和资源使用：
-
-- **单一 Socket 连接**：所有基于事件的插件共享一个 niri 事件流 socket 连接，而不是每个插件单独连接
-- **高效事件分发**：事件只读取一次，然后通过 `mpsc::UnboundedChannel` 分发给所有需要处理事件的插件
-- **智能事件过滤**：插件可以声明它们感兴趣的事件类型，只有相关的插件才会收到事件，避免不必要的处理
-- **性能优化**：减少了 socket 连接数量，降低了系统资源消耗
-- **易于扩展**：新的事件驱动插件只需实现 `handle_event` 和 `is_interested_in_event` 方法，无需管理自己的事件监听循环
-
-**事件分发流程**：
-1. `PluginManager` 启动统一的事件监听器任务
-2. 事件监听器通过 `NiriIpc::create_event_stream_socket` 创建事件流连接
-3. 事件通过 channel 发送到守护进程主循环
-4. 主循环调用 `PluginManager::distribute_event` 分发事件
-5. 只有感兴趣的插件会收到事件通知
-
-这种设计确保了：
-- 更好的资源利用（只有一个 socket 连接）
-- 更高的事件处理效率（事件只读取一次，只分发给感兴趣的插件）
-- 更简洁的插件代码（插件只需关注事件处理逻辑）
-- 更好的性能（避免不关心事件的插件被调用）
-
-### 配置热重载
-
-Piri 支持配置文件热重载，无需重启守护进程：
-
-- **文件监听**：使用 `notify` crate 监听配置文件变化
-- **自动重载**：配置文件修改后自动触发重载
-- **插件更新**：重载配置后，所有插件通过 `update_config` 方法更新配置
-- **错误处理**：重载失败时发送通知，但不影响守护进程运行
-
+### 正则表达式缓存
+`WindowMatcherCache` 使用 `Arc<Mutex<HashMap<String, Regex>>>`。在 `window_rule` 等需要频繁匹配 app_id 的场景下，避免了重复编译正则表达式带来的 CPU 开销。

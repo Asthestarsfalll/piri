@@ -75,6 +75,8 @@ open_on_workspace = "3"
 focus_command = "notify-send 'Focusing on Chrome'"
 ```
 
+> **注意**: Window Rule 插件支持列表匹配（`app_id` 和 `title` 可以是列表），详见 [Window Rule 文档](plugins/window_rule.md)。
+
 ### Singleton 插件
 
 ```toml

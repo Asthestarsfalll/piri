@@ -1,54 +1,21 @@
 use anyhow::Result;
 use log::{debug, info, warn};
 use niri_ipc::{Action, Event, Reply, Request};
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
 
 use crate::niri::NiriIpc;
+use crate::utils::send_notification;
 
-pub struct AutofillPlugin {
-    niri: NiriIpc,
-    // Store handle for debouncing
-    debounce_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
-}
+pub struct AutofillPlugin;
 
 impl AutofillPlugin {
-    pub fn new() -> Self {
-        Self {
-            niri: NiriIpc::new(None),
-            debounce_handle: Arc::new(Mutex::new(None)),
+    async fn handle_event_internal(&self, _event: &Event, niri: &NiriIpc) -> Result<()> {
+        if let Err(e) = Self::check_and_align_last_column(niri).await {
+            warn!("Autofill alignment failed: {}", e);
+            send_notification("piri", &format!("Autofill alignment failed: {}", e));
         }
-    }
-
-    /// Handle a single event - all events trigger the same alignment check with debouncing
-    async fn handle_event_internal(&self, event: &Event, niri: &NiriIpc) -> Result<()> {
-        match event {
-            Event::WindowClosed { .. } | Event::WindowLayoutsChanged { .. } => {
-                let niri_clone = niri.clone();
-                let debounce_handle = self.debounce_handle.clone();
-
-                let mut guard = debounce_handle.lock().await;
-                // Cancel previous pending task
-                if let Some(handle) = guard.take() {
-                    handle.abort();
-                }
-
-                *guard = Some(tokio::spawn(async move {
-                    if let Err(e) = Self::check_and_align_last_column(&niri_clone).await {
-                        if !e.to_string().contains("canceled") {
-                            warn!("Autofill alignment failed: {}", e);
-                        }
-                    }
-                }));
-            }
-            _ => {}
-        }
-
         Ok(())
     }
 
-    /// Align columns in current workspace by focusing first then last column
     async fn check_and_align_last_column(niri: &NiriIpc) -> Result<()> {
         debug!("Aligning columns in current workspace (batched original logic)");
 
@@ -78,20 +45,11 @@ impl AutofillPlugin {
 
 #[async_trait::async_trait]
 impl crate::plugins::Plugin for AutofillPlugin {
-    fn name(&self) -> &str {
-        "autofill"
-    }
+    type Config = ();
 
-    async fn init(&mut self, niri: NiriIpc, _config: &crate::config::Config) -> Result<()> {
-        self.niri = niri;
+    fn new(_niri: NiriIpc, _config: ()) -> Self {
         info!("Autofill plugin initialized");
-        // Event listener is now handled by PluginManager
-        Ok(())
-    }
-
-    async fn shutdown(&mut self) -> Result<()> {
-        info!("Autofill plugin shutdown");
-        Ok(())
+        Self
     }
 
     async fn handle_event(&mut self, event: &Event, niri: &NiriIpc) -> Result<()> {
@@ -103,15 +61,5 @@ impl crate::plugins::Plugin for AutofillPlugin {
             event,
             Event::WindowClosed { .. } | Event::WindowLayoutsChanged { .. }
         )
-    }
-
-    async fn update_config(
-        &mut self,
-        niri: NiriIpc,
-        _config: &crate::config::Config,
-    ) -> Result<()> {
-        info!("Updating autofill plugin configuration");
-        self.niri = niri;
-        Ok(())
     }
 }

@@ -41,30 +41,34 @@ open_on_workspace = "2"
 [[window_rule]]
 app_id = "^code$"
 open_on_workspace = "dev"
+
+# app_id 作为列表（任意一个匹配即可）
+[[window_rule]]
+app_id = ["code", "code-oss", "codium"]
+open_on_workspace = "dev"
+
+# title 作为列表（任意一个匹配即可）
+[[window_rule]]
+title = [".*Chrome.*", ".*Chromium.*", ".*Google Chrome.*"]
+open_on_workspace = "browser"
 ```
 
 ## 配置字段
 
-- **`app_id`** (可选): 用于匹配窗口 `app_id` 的正则表达式
-- **`title`** (可选): 用于匹配窗口标题的正则表达式
-- **`open_on_workspace`** (可选): 目标 workspace 标识符（名称或索引）
+- **`app_id`** (可选): 用于匹配窗口 `app_id` 的正则表达式。可以是单个字符串或字符串列表。如果提供列表，任意一个模式匹配即可触发规则。
+- **`title`** (可选): 用于匹配窗口标题的正则表达式。可以是单个字符串或字符串列表。如果提供列表，任意一个模式匹配即可触发规则。
+- **`open_on_workspace`** (可选): 目标 workspace 标识符（名称或索引，详见下方说明）
 - **`focus_command`** (可选): 当窗口获得焦点时执行的命令
 
 **注意**: 
 - 至少需要指定 `app_id` 或 `title` 中的一个
 - 至少需要指定 `open_on_workspace` 或 `focus_command` 中的一个
 - 如果同时指定 `app_id` 和 `title`，则任一匹配即可（OR 逻辑）
+- `app_id` 和 `title` 可以是单个字符串或字符串列表。当提供列表时，列表中任意一个模式匹配即可触发规则
 
-> **参考**: 关于窗口匹配机制的详细说明，请参阅 [窗口匹配机制文档](../window_matching.md)
+> **窗口匹配**: 关于窗口匹配机制的详细说明，请参阅 [窗口匹配机制文档](../window_matching.md) 和 [插件系统通用配置说明](plugins.md#通用配置说明)
 
-## Workspace 标识符
-
-支持两种类型：
-
-- **name**: Workspace 名称，如 `"main"`, `"browser"`
-- **idx**: Workspace 索引（1-based），如 `"1"`, `"2"`
-
-**匹配顺序**：name 优先，然后 idx。
+> **Workspace 标识符**: 关于 workspace 标识符（name/idx）的详细说明，请参阅 [插件系统通用配置说明](plugins.md#workspace-标识符)
 
 ## 工作原理
 
@@ -78,6 +82,7 @@ open_on_workspace = "dev"
 
 - ✅ **正则表达式**: 支持完整的正则表达式语法
 - ✅ **灵活匹配**: 支持 `app_id` 或 `title`，或两者组合（OR 逻辑）
+- ✅ **列表支持**: `app_id` 和 `title` 可以是模式列表，任意一个匹配即可触发规则
 - ✅ **正则缓存**: 编译后的正则表达式会被缓存，提高性能
 - ✅ **配置热更新**: 支持配置更新而不重启守护进程
 

@@ -21,51 +21,129 @@ use crate::utils::send_notification;
 /// Plugin trait that all plugins must implement
 #[async_trait]
 pub trait Plugin: Send + Sync {
-    /// Plugin name
-    fn name(&self) -> &str;
+    type Config: Clone + Send + Sync + FromConfig;
 
-    /// Initialize the plugin
-    async fn init(&mut self, niri: NiriIpc, config: &Config) -> Result<()>;
+    /// Create a new instance of the plugin
+    fn new(niri: NiriIpc, config: Self::Config) -> Self
+    where
+        Self: Sized;
 
-    /// Handle IPC request (optional, for plugins that need to handle IPC commands)
     async fn handle_ipc_request(&mut self, _request: &IpcRequest) -> Result<Option<Result<()>>> {
-        // Default implementation: not handled
         Ok(None)
     }
 
-    /// Shutdown the plugin (optional, for plugins that need cleanup)
-    async fn shutdown(&mut self) -> Result<()> {
-        // Default implementation: do nothing
-        Ok(())
-    }
-
-    /// Update plugin configuration (optional, for plugins that support config updates)
-    async fn update_config(&mut self, _niri: NiriIpc, _config: &Config) -> Result<()> {
-        // Default implementation: do nothing
-        Ok(())
-    }
-
-    /// Handle niri event (optional, for plugins that need to listen to events)
     async fn handle_event(&mut self, _event: &Event, _niri: &NiriIpc) -> Result<()> {
-        // Default implementation: do nothing
         Ok(())
     }
 
     /// Check if plugin is interested in a specific event type
-    /// This is used for event filtering to avoid calling plugins that don't care about the event
+    /// This is used by PluginManager for event filtering to avoid calling plugins that don't care about the event.
+    /// Only events that pass this filter will be passed to handle_event().
+    ///
+    /// Note: Plugins should NOT duplicate event type checking in handle_event() - if an event
+    /// reaches handle_event(), it has already been filtered by is_interested_in_event().
+    ///
     /// Default implementation returns true (receive all events for backward compatibility)
-    fn is_interested_in_event(&self, event: &Event) -> bool {
-        let _ = event; // Suppress unused variable warning
-        true // Default: interested in all events
+    fn is_interested_in_event(&self, _event: &Event) -> bool {
+        false
+    }
+
+    async fn update_config(&mut self, _config: Self::Config) -> Result<()> {
+        Ok(())
     }
 }
 
-/// Plugin manager that manages all plugins
+pub trait FromConfig {
+    fn from_config(config: &Config) -> Option<Self>
+    where
+        Self: Sized;
+}
+
+impl FromConfig for () {
+    fn from_config(_config: &Config) -> Option<Self> {
+        Some(())
+    }
+}
+
+macro_rules! register_plugins {
+    ($($name:expr => $variant:ident($module:ident::$struct:ident)),* $(,)?) => {
+        pub enum PluginEnum {
+            $($variant($module::$struct),)*
+        }
+
+        impl PluginEnum {
+            pub fn name(&self) -> &str {
+                match self {
+                    $(PluginEnum::$variant(_) => $name,)*
+                }
+            }
+
+            async fn handle_event(&mut self, event: &Event, niri: &NiriIpc) -> Result<()> {
+                match self {
+                    $(PluginEnum::$variant(p) => p.handle_event(event, niri).await,)*
+                }
+            }
+
+            fn is_interested_in_event(&self, event: &Event) -> bool {
+                match self {
+                    $(PluginEnum::$variant(p) => p.is_interested_in_event(event),)*
+                }
+            }
+
+            async fn handle_ipc_request(&mut self, request: &IpcRequest) -> Result<Option<Result<()>>> {
+                match self {
+                    $(PluginEnum::$variant(p) => p.handle_ipc_request(request).await,)*
+                }
+            }
+
+            async fn update_config(&mut self, config: &Config) -> Result<()> {
+                match self {
+                    $(PluginEnum::$variant(p) => {
+                        if let Some(plugin_config) = <<$module::$struct as Plugin>::Config as FromConfig>::from_config(config) {
+                            p.update_config(plugin_config).await
+                        } else {
+                            // If from_config returns None, it means the plugin should be disabled.
+                            // However, update_config is called on an already existing plugin.
+                            // The PluginManager::init will handle disabling/removing the plugin.
+                            Ok(())
+                        }
+                    },)*
+                }
+            }
+        }
+
+        impl PluginManager {
+            pub async fn init(&mut self, niri: NiriIpc, config: &Config) -> Result<()> {
+                let p = &config.piri.plugins;
+                $(
+                    let plugin_config = <<$module::$struct as Plugin>::Config as FromConfig>::from_config(config);
+                    let enabled = p.is_enabled($name) && plugin_config.is_some();
+
+                    self.init_or_update_plugin($name, enabled, niri.clone(), config, || {
+                        PluginEnum::$variant(<$module::$struct as Plugin>::new(
+                            niri.clone(),
+                            plugin_config.unwrap(),
+                        ))
+                    }).await?;
+                )*
+                Ok(())
+            }
+        }
+    };
+}
+
+register_plugins! {
+    "empty"        => Empty(empty::EmptyPlugin),
+    "window_rule"  => WindowRule(window_rule::WindowRulePlugin),
+    "scratchpads"  => Scratchpads(scratchpads::ScratchpadsPlugin),
+    "singleton"    => Singleton(singleton::SingletonPlugin),
+    "window_order" => WindowOrder(window_order::WindowOrderPlugin),
+    "autofill"     => Autofill(autofill::AutofillPlugin),
+}
+
 pub struct PluginManager {
-    plugins: Vec<Box<dyn Plugin>>,
-    /// Event listener task handle
+    plugins: Vec<PluginEnum>,
     event_listener_handle: Option<tokio::task::JoinHandle<()>>,
-    /// Channel sender for events (receiver is in the event listener loop)
     event_sender: Option<mpsc::UnboundedSender<Event>>,
 }
 
@@ -78,7 +156,6 @@ impl PluginManager {
         }
     }
 
-    /// Start unified event listener that sends events to channel
     pub async fn start_event_listener(
         &mut self,
         niri: NiriIpc,
@@ -97,9 +174,10 @@ impl PluginManager {
         Ok(rx)
     }
 
-    /// Unified event listener loop that reads events and sends them to channel
     async fn event_listener_loop(niri: NiriIpc, event_tx: mpsc::UnboundedSender<Event>) {
         info!("Plugin manager event listener started");
+
+        let mut is_first_connection = true;
 
         // Outer loop: reconnect on connection failure
         loop {
@@ -114,6 +192,15 @@ impl PluginManager {
 
             let mut read_event = socket.read_events();
             info!("Event stream connected, waiting for events...");
+
+            // Send notification on first successful connection
+            if is_first_connection {
+                send_notification(
+                    "piri",
+                    "Started successfully, socket connection established",
+                );
+                is_first_connection = false;
+            }
 
             while let Ok(event) = read_event() {
                 debug!("Raw event received: {:?}", event);
@@ -145,106 +232,42 @@ impl PluginManager {
         }
     }
 
-    /// Helper function to initialize or update a plugin
-    async fn init_plugin<P, F>(
+    /// Initialize or update a single plugin
+    /// If the plugin already exists, tries to update it via update_config to preserve runtime state.
+    /// If update fails or plugin doesn't exist, creates a new instance.
+    async fn init_or_update_plugin<F>(
         &mut self,
-        plugin_name: &str,
+        name: &str,
         enabled: bool,
-        create_plugin: F,
-        niri: NiriIpc,
+        _niri: NiriIpc,
         config: &Config,
+        create_plugin: F,
     ) -> Result<()>
     where
-        P: Plugin + 'static,
-        F: FnOnce() -> P,
+        F: FnOnce() -> PluginEnum,
     {
+        let existing_plugin = self.plugins.iter_mut().find(|p| p.name() == name);
+
         if enabled {
-            if let Some(plugin) = self.plugins.iter_mut().find(|p| p.name() == plugin_name) {
-                // Plugin exists, update config
-                info!("Updating {} plugin configuration", plugin_name);
-                plugin.update_config(niri.clone(), config).await?;
+            if let Some(plugin) = existing_plugin {
+                debug!("Updating existing plugin configuration: {}", name);
+                if let Err(e) = plugin.update_config(config).await {
+                    warn!("Failed to update plugin {}, recreating: {}", name, e);
+                    self.plugins.retain(|p| p.name() != name);
+                    let new_plugin = create_plugin();
+                    self.plugins.push(new_plugin);
+                }
             } else {
-                // Plugin doesn't exist, create new one
-                let mut new_plugin = create_plugin();
-                new_plugin.init(niri.clone(), config).await?;
-                self.plugins.push(Box::new(new_plugin));
-                log::info!("{} plugin enabled", plugin_name);
+                info!("Initializing new plugin: {}", name);
+                let new_plugin = create_plugin();
+                self.plugins.push(new_plugin);
             }
         } else {
-            // Remove plugin if it exists and is disabled
-            let had_plugin = self.plugins.iter().any(|p| p.name() == plugin_name);
-            self.plugins.retain(|p| p.name() != plugin_name);
-            if had_plugin {
-                log::debug!("{} plugin disabled by configuration", plugin_name);
+            if self.plugins.iter().any(|p| p.name() == name) {
+                info!("Disabling plugin: {}", name);
+                self.plugins.retain(|p| p.name() != name);
             }
         }
-        Ok(())
-    }
-
-    /// Initialize all plugins
-    pub async fn init(&mut self, niri: NiriIpc, config: &Config) -> Result<()> {
-        let p = &config.piri.plugins;
-
-        // Initialize or update scratchpads plugin
-        self.init_plugin(
-            "scratchpads",
-            p.is_enabled("scratchpads"),
-            || scratchpads::ScratchpadsPlugin::new(),
-            niri.clone(),
-            config,
-        )
-        .await?;
-
-        // Initialize or update empty plugin
-        self.init_plugin(
-            "empty",
-            p.is_enabled("empty"),
-            || empty::EmptyPlugin::new(),
-            niri.clone(),
-            config,
-        )
-        .await?;
-
-        // Initialize or update window_rule plugin
-        self.init_plugin(
-            "window_rule",
-            p.is_enabled("window_rule"),
-            || window_rule::WindowRulePlugin::new(),
-            niri.clone(),
-            config,
-        )
-        .await?;
-
-        // Initialize or update autofill plugin
-        self.init_plugin(
-            "autofill",
-            p.is_enabled("autofill"),
-            || autofill::AutofillPlugin::new(),
-            niri.clone(),
-            config,
-        )
-        .await?;
-
-        // Initialize or update singleton plugin
-        self.init_plugin(
-            "singleton",
-            p.is_enabled("singleton"),
-            || singleton::SingletonPlugin::new(),
-            niri.clone(),
-            config,
-        )
-        .await?;
-
-        // Initialize or update window_order plugin
-        self.init_plugin(
-            "window_order",
-            p.is_enabled("window_order"),
-            || window_order::WindowOrderPlugin::new(),
-            niri.clone(),
-            config,
-        )
-        .await?;
-
         Ok(())
     }
 
@@ -257,17 +280,5 @@ impl PluginManager {
             }
         }
         Ok(None)
-    }
-    pub async fn shutdown(&mut self) -> Result<()> {
-        info!("Shutting down plugins...");
-
-        // Shutdown all plugins
-        for plugin in &mut self.plugins {
-            if let Err(e) = plugin.shutdown().await {
-                warn!("Error shutting down plugin {}: {}", plugin.name(), e);
-            }
-        }
-
-        Ok(())
     }
 }

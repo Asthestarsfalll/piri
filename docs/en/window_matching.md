@@ -75,6 +75,8 @@ open_on_workspace = "3"
 focus_command = "notify-send 'Focusing on Chrome'"
 ```
 
+> **Note**: The Window Rule plugin supports list matching (`app_id` and `title` can be lists). See [Window Rule documentation](plugins/window_rule.md) for details.
+
 ### Singleton Plugin
 
 ```toml

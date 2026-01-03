@@ -16,7 +16,7 @@ mod utils;
 use commands::CommandHandler;
 use config::Config;
 use ipc::{IpcClient, IpcRequest, IpcResponse};
-use utils::{send_notification, set_process_name};
+use utils::send_notification;
 
 #[derive(Parser)]
 #[command(name = "piri")]
@@ -109,9 +109,6 @@ enum Shell {
 
 // Custom tokio runtime with process name setting
 fn create_runtime() -> tokio::runtime::Runtime {
-    // Set process name before creating runtime
-    set_process_name("piri");
-
     // Create runtime with thread name
     tokio::runtime::Builder::new_multi_thread()
         .thread_name("piri")
@@ -146,18 +143,8 @@ async fn async_main() -> Result<()> {
     let cli = Cli::parse();
 
     // Initialize logger
-    // In daemon mode (PIRI_DAEMON env var set), ensure logs go to stderr
-    // since stdout is closed
     let log_level = if cli.debug { "debug" } else { "info" };
-    let mut logger_builder =
-        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level));
-
-    // If we're in daemon mode, force output to stderr
-    if std::env::var("PIRI_DAEMON").is_ok() {
-        logger_builder.target(env_logger::Target::Stderr);
-    }
-
-    logger_builder.init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
 
     match cli.command {
         Commands::Daemon => {
