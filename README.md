@@ -125,12 +125,17 @@ piri completion fish > ~/.config/fish/completions/piri.fish
 
 ![Scratchpads](./assets/scratchpads.mp4)
 
-快速显示和隐藏常用应用程序的窗口。支持跨 workspace 和 monitor，无论你在哪个工作区或显示器上，都能快速访问你的 scratchpad 窗口。
+快速显示和隐藏常用应用程序的窗口。支持跨 workspace 和 monitor，无论你在哪个工作区或显示器上，都能快速访问你的 scratchpad 窗口。支持**动态添加窗口**、**自动保留手动调整的大小与边距**，以及**隐藏后自动移动到指定工作区**。
 
 **配置示例**：
 ```toml
 [piri.plugins]
 scratchpads = true
+
+[piri.scratchpad]
+default_size = "40% 60%"
+default_margin = 50
+move_to_workspace = "tmp" # 窗口隐藏后自动移动到工作区 tmp
 
 [scratchpads.term]
 direction = "fromRight"
@@ -148,6 +153,8 @@ piri scratchpads {name} toggle
 # 动态添加当前窗口为 scratchpad
 piri scratchpads {name} add {direction}
 ```
+
+> **提示**: 动态添加的窗口仅在第一次注册时使用默认大小和边距。之后你可以手动调整窗口的大小和位置（边距），插件会自动保留这些调整。
 
 详细说明请参考 [Scratchpads 文档](docs/zh/plugins/scratchpads.md)。
 

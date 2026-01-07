@@ -326,6 +326,25 @@ pub fn calculate_position(
     }
 }
 
+/// Extract margin from current position based on direction
+pub fn extract_margin(
+    direction: Direction,
+    output_width: u32,
+    output_height: u32,
+    window_width: u32,
+    window_height: u32,
+    x: i32,
+    y: i32,
+) -> u32 {
+    let margin = match direction {
+        Direction::FromTop => y,
+        Direction::FromBottom => output_height as i32 - window_height as i32 - y,
+        Direction::FromLeft => x,
+        Direction::FromRight => output_width as i32 - window_width as i32 - x,
+    };
+    margin.max(0) as u32
+}
+
 /// Calculate off-screen position based on direction (for hidden positions)
 /// Returns (x, y) coordinates where window is completely outside the screen
 pub fn calculate_hide_position(

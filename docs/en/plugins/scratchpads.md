@@ -70,7 +70,19 @@ piri scratchpads mypad add fromRight
 
 Dynamically added scratchpads will use the default size and margin set in the `[piri.scratchpad]` section.
 
-> **Note**: Dynamically added windows are only resized once during initial registration. After that, you can manually resize the window, and the plugin will maintain your custom size during subsequent show/hide toggles without overriding it.
+> **Note**: Dynamically added windows are only resized and positioned once during initial registration. After that, you can manually resize or move the window, and the plugin will maintain your custom size and margin (position) during subsequent show/hide toggles without overriding it.
+
+### Global Configuration
+
+You can set global defaults in the `[piri.scratchpad]` section:
+
+| Parameter | Description | Default |
+| :--- | :--- | :--- |
+| `default_size` | Default size for dynamic addition | `"75% 60%"` |
+| `default_margin` | Default margin for dynamic addition | `50` |
+| `move_to_workspace` | (Optional) Workspace to move windows to when hidden | `None` |
+
+> **move_to_workspace**: If specified, hidden scratchpad windows will be moved to this workspace. This keeps hidden windows out of the current workspace's window stack. When shown, the window will still automatically move to the currently active workspace.
 
 ## How It Works
 

@@ -226,6 +226,9 @@ pub struct ScratchpadDefaults {
     /// Default margin for dynamically added scratchpads (pixels)
     #[serde(default = "default_margin")]
     pub default_margin: u32,
+    /// Optional workspace to move scratchpads to when hidden
+    #[serde(default)]
+    pub move_to_workspace: Option<String>,
 }
 
 fn default_size() -> String {
@@ -241,6 +244,7 @@ impl Default for ScratchpadDefaults {
         Self {
             default_size: default_size(),
             default_margin: default_margin(),
+            move_to_workspace: None,
         }
     }
 }

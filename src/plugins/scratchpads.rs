@@ -19,6 +19,7 @@ pub struct ScratchpadsPluginConfig {
     pub scratchpads: HashMap<String, ScratchpadConfig>,
     pub default_size: String,
     pub default_margin: u32,
+    pub move_to_workspace: Option<String>,
 }
 
 impl Default for ScratchpadsPluginConfig {
@@ -27,6 +28,7 @@ impl Default for ScratchpadsPluginConfig {
             scratchpads: HashMap::new(),
             default_size: "75% 60%".to_string(),
             default_margin: 50,
+            move_to_workspace: None,
         }
     }
 }
@@ -39,6 +41,7 @@ impl FromConfig for ScratchpadsPluginConfig {
             scratchpads: config.scratchpads.clone(),
             default_size: config.piri.scratchpad.default_size.clone(),
             default_margin: config.piri.scratchpad.default_margin,
+            move_to_workspace: config.piri.scratchpad.move_to_workspace.clone(),
         })
     }
 }
@@ -135,8 +138,12 @@ impl ScratchpadManager {
         Ok(())
     }
 
-    async fn sync_state(&mut self, name: &str) -> Result<()> {
-        let (config, is_visible, window_id, is_dynamic) = {
+    async fn sync_state(
+        &mut self,
+        name: &str,
+        global_move_to_workspace: Option<String>,
+    ) -> Result<()> {
+        let (mut config, is_visible, window_id, is_dynamic) = {
             let state = self.states.get_mut(name).context("State not found")?;
             (
                 state.config.clone(),
@@ -158,6 +165,29 @@ impl ScratchpadManager {
             .get_window_position_async(window_id)
             .await?
             .context("Failed to get window position")?;
+
+        // For dynamic scratchpads, update margin from current position before hiding
+        if is_dynamic && !is_visible {
+            let (output_width, output_height) = self.niri.get_output_size().await?;
+            let new_margin = window_utils::extract_margin(
+                config.direction,
+                output_width,
+                output_height,
+                current_width,
+                current_height,
+                current_x,
+                current_y,
+            );
+            debug!(
+                "Updating dynamic scratchpad '{}' margin to {}",
+                name, new_margin
+            );
+            config.margin = new_margin;
+            // Update state with new margin
+            if let Some(state) = self.states.get_mut(name) {
+                state.config.margin = new_margin;
+            }
+        }
 
         let (target_x, target_y, target_width, target_height) = if is_dynamic {
             // For dynamic scratchpads, use current size to calculate target position
@@ -183,6 +213,21 @@ impl ScratchpadManager {
         if is_visible {
             window_utils::focus_window(self.niri.clone(), window_id).await?;
         } else {
+            // After hiding, optionally move to a specific workspace if configured
+            if let Some(workspace) = global_move_to_workspace {
+                debug!(
+                    "Moving hidden scratchpad window {} to workspace {}",
+                    window_id, workspace
+                );
+                if let Err(e) = self.niri.move_window_to_workspace(window_id, &workspace).await {
+                    log::warn!(
+                        "Failed to move hidden scratchpad to workspace {}: {}",
+                        workspace,
+                        e
+                    );
+                }
+            }
+
             let previous_focused = {
                 let state = self.states.get_mut(name).context("State not found")?;
                 state.previous_focused_window.take()
@@ -247,7 +292,12 @@ impl ScratchpadManager {
         Ok(window_id)
     }
 
-    async fn toggle(&mut self, name: &str, config: Option<ScratchpadConfig>) -> Result<()> {
+    async fn toggle(
+        &mut self,
+        name: &str,
+        config: Option<ScratchpadConfig>,
+        move_to_workspace: Option<String>,
+    ) -> Result<()> {
         // 1. Ensure state exists
         if !self.states.contains_key(name) {
             let config = config.context("No config provided for new scratchpad")?;
@@ -287,7 +337,7 @@ impl ScratchpadManager {
         }
 
         // 4. Sync
-        self.sync_state(name).await
+        self.sync_state(name, move_to_workspace).await
     }
 
     async fn add_current_window(
@@ -408,7 +458,8 @@ impl crate::plugins::Plugin for ScratchpadsPlugin {
                 info!("Handling scratchpad toggle for: {}", name);
 
                 let config = self.config.scratchpads.get(name).cloned();
-                match self.manager.toggle(name, config).await {
+                match self.manager.toggle(name, config, self.config.move_to_workspace.clone()).await
+                {
                     Ok(_) => Ok(Some(Ok(()))),
                     Err(e) => {
                         let error_msg = format!("Scratchpad '{}' error: {}", name, e);

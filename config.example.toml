@@ -19,6 +19,8 @@ window_order = true
 [piri.scratchpad]
 default_size = "40% 60%"
 default_margin = 50
+# Optional: move hidden scratchpads to a specific workspace
+# move_to_workspace = "tmp"
 
 # Plugins configuration
 # Empty plugin: executes commands when switching to empty workspaces

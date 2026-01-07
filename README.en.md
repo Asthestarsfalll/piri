@@ -112,12 +112,17 @@ piri completion fish > ~/.config/fish/completions/piri.fish
 
 ![Scratchpads](./assets/scratchpads.mp4)
 
-Quickly show and hide windows of frequently used applications. Supports cross-workspace and cross-monitor, so you can quickly access your scratchpad windows regardless of which workspace or monitor you're on.
+Quickly show and hide windows of frequently used applications. Supports cross-workspace and cross-monitor, so you can quickly access your scratchpad windows regardless of which workspace or monitor you're on. Features **dynamic window addition**, **automatic retention of manual size and margin adjustments**, and **automatic moving to a specific workspace when hidden**.
 
 **Configuration Example**:
 ```toml
 [piri.plugins]
 scratchpads = true
+
+[piri.scratchpad]
+default_size = "40% 60%"
+default_margin = 50
+move_to_workspace = "tmp" # Automatically move to workspace tmp when hidden
 
 [scratchpads.term]
 direction = "fromRight"
@@ -135,6 +140,8 @@ piri scratchpads {name} toggle
 # Dynamically add current window as scratchpad
 piri scratchpads {name} add {direction}
 ```
+
+> **Tip**: Dynamically added windows only use default size and margin during initial registration. After that, you can manually resize or move the window, and the plugin will automatically maintain these adjustments.
 
 For detailed documentation, please refer to [Scratchpads documentation](docs/en/plugins/scratchpads.md).
 
