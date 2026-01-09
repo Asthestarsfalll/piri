@@ -213,7 +213,20 @@ impl ScratchpadManager {
         if is_visible {
             window_utils::focus_window(self.niri.clone(), window_id).await?;
         } else {
-            // After hiding, optionally move to a specific workspace if configured
+            // Restore focus FIRST before moving the window to another workspace.
+            // This prevents Niri from following the focused window to the target workspace.
+            let previous_focused = {
+                let state = self.states.get_mut(name).context("State not found")?;
+                state.previous_focused_window.take()
+            };
+            if let Some(id) = previous_focused {
+                debug!("Restoring focus to window {}", id);
+                if let Err(e) = window_utils::focus_window(self.niri.clone(), id).await {
+                    log::warn!("Failed to restore focus to window {}: {}", id, e);
+                }
+            }
+
+            // After hiding and restoring focus, optionally move to a specific workspace if configured
             if let Some(workspace) = global_move_to_workspace {
                 debug!(
                     "Moving hidden scratchpad window {} to workspace {}",
@@ -226,14 +239,6 @@ impl ScratchpadManager {
                         e
                     );
                 }
-            }
-
-            let previous_focused = {
-                let state = self.states.get_mut(name).context("State not found")?;
-                state.previous_focused_window.take()
-            };
-            if let Some(id) = previous_focused {
-                window_utils::focus_window(self.niri.clone(), id).await?;
             }
         }
 
