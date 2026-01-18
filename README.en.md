@@ -265,6 +265,11 @@ command = "google-chrome-stable"
 [singleton.term]
 command = "GTK_IM_MODULE=wayland ghostty --class=singleton.term"
 app_id = "singleton.term"
+
+[singleton.editor]
+command = "code"
+app_id = "code"
+on_created_command = "notify-send 'Editor opened'"
 ```
 
 **Quick Usage**:
@@ -278,6 +283,7 @@ piri singleton {name} toggle
 - Automatic App ID extraction, no manual specification needed
 - Window registry for fast lookup of existing windows
 - Automatically focuses existing windows, prevents duplicate instances
+- Supports executing custom commands after window creation (`on_created_command`)
 
 For detailed documentation, please refer to the [Singleton documentation](docs/en/plugins/singleton.md).
 

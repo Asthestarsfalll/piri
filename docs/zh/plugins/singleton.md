@@ -16,12 +16,18 @@ command = "google-chrome-stable"
 [singleton.term]
 command = "GTK_IM_MODULE=wayland ghostty --class=singleton.term"
 app_id = "singleton.term"
+
+[singleton.editor]
+command = "code"
+app_id = "code"
+on_created_command = "notify-send '编辑器已打开'"
 ```
 
 ### 配置参数
 
 - `command` (必需): 启动应用程序的完整命令，可包含环境变量和参数
 - `app_id` (可选): 用于匹配窗口的应用 ID（支持正则表达式，详见下方说明）。如不指定，插件会自动从命令中提取（取可执行文件名）
+- `on_created_command` (可选): 窗口创建后执行的命令。此命令仅在创建新窗口时执行，聚焦已存在的窗口时不会执行
 
 > **窗口匹配**: `app_id` 使用正则表达式匹配。关于窗口匹配机制的详细说明（包括特殊字符转义），请参阅 [窗口匹配机制文档](../window_matching.md) 和 [插件系统通用配置说明](plugins.md#通用配置说明)
 
@@ -39,8 +45,9 @@ piri singleton term toggle
 ## 工作原理
 
 1. **首次切换**: 检查是否存在匹配的窗口，如果找到则聚焦并注册，否则启动应用程序并等待窗口出现
-2. **后续切换**: 如果注册的窗口仍存在则聚焦，否则搜索匹配的窗口或重新启动
-3. **窗口匹配**: 使用配置的 `app_id` 或从命令中提取的 `app_id` 进行匹配
+2. **窗口创建**: 当创建新窗口时（未找到现有窗口），窗口出现后，如果配置了 `on_created_command`，将会执行该命令
+3. **后续切换**: 如果注册的窗口仍存在则聚焦，否则搜索匹配的窗口或重新启动（如果配置了 `on_created_command` 会再次执行）
+4. **窗口匹配**: 使用配置的 `app_id` 或从命令中提取的 `app_id` 进行匹配
 
 ## 特性
 
@@ -60,3 +67,4 @@ piri singleton term toggle
 1. **窗口匹配**: 确保应用程序设置了正确的 `app_id` 属性，或在配置中明确指定
 2. **app_id 提取**: 从命令的第一个单词提取可执行文件名（去除路径），如 `/usr/bin/google-chrome-stable` → `google-chrome-stable`
 3. **超时**: 启动应用后最多等待 5 秒让窗口出现，超时后不会报错但不会聚焦窗口
+4. **on_created_command**: `on_created_command` 仅在创建新窗口时执行，聚焦已存在的窗口时不会执行。如果窗口关闭后重新打开，命令会再次执行

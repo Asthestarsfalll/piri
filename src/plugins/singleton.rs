@@ -108,6 +108,21 @@ impl SingletonManager {
             )
             .await?
             .context("Failed to launch/find singleton window")?;
+
+            // Execute on_created_command if specified (only when window is newly created)
+            if let Some(ref on_created_command) = config.on_created_command {
+                info!(
+                    "Executing on_created_command for singleton {}: {}",
+                    name, on_created_command
+                );
+                window_utils::execute_command(on_created_command).with_context(|| {
+                    format!(
+                        "Failed to execute on_created_command: {}",
+                        on_created_command
+                    )
+                })?;
+            }
+
             window.id
         };
 

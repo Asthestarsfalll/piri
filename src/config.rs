@@ -206,6 +206,9 @@ pub struct SingletonConfig {
     pub command: String,
     /// Optional app_id pattern to match windows (if not specified, extracted from command)
     pub app_id: Option<String>,
+    /// Optional command to execute after the window is created (only executed when window is newly created)
+    #[serde(default)]
+    pub on_created_command: Option<String>,
 }
 
 /// Helper type to deserialize String or Vec<String>

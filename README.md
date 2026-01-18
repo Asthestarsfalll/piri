@@ -277,6 +277,11 @@ command = "google-chrome-stable"
 [singleton.term]
 command = "GTK_IM_MODULE=wayland ghostty --class=singleton.term"
 app_id = "singleton.term"
+
+[singleton.editor]
+command = "code"
+app_id = "code"
+on_created_command = "notify-send '编辑器已打开'"
 ```
 
 **快速使用**：
@@ -290,6 +295,7 @@ piri singleton {name} toggle
 - 自动 App ID 提取，无需手动指定
 - 窗口注册表，快速查找已存在的窗口
 - 自动聚焦现有窗口，避免重复实例
+- 支持窗口创建后执行自定义命令（`on_created_command`）
 
 详细说明请参考 [Singleton 文档](docs/zh/plugins/singleton.md)。
 
