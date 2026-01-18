@@ -32,6 +32,12 @@ open_on_workspace = "dev"
 title = ".*Chrome.*"
 focus_command = "notify-send 'Chrome focused'"
 
+# Execute focus_command only once per rule (rule-level, not window-level)
+[[window_rule]]
+app_id = "firefox"
+focus_command = "notify-send 'Firefox focused'"
+focus_command_once = true
+
 # Regex example: match app_id starting with "firefox"
 [[window_rule]]
 app_id = "^firefox"
@@ -59,6 +65,7 @@ open_on_workspace = "browser"
 - **`title`** (optional): Regular expression pattern(s) to match window title. Can be a string or a list of strings. If a list is provided, any pattern that matches will trigger the rule.
 - **`open_on_workspace`** (optional): Target workspace identifier (name or index)
 - **`focus_command`** (optional): Command to execute when the window gains focus
+- **`focus_command_once`** (optional, default: `false`): If set to `true`, the `focus_command` will only execute once globally for the rule, regardless of how many windows match it. See [issue #1](https://github.com/Asthestarsfalll/piri/issues/1) for more details.
 
 **Note**: 
 - At least one of `app_id` or `title` must be specified
@@ -93,8 +100,21 @@ The plugin listens for `WindowOpenedOrChanged` events:
 - ✅ **Regex Caching**: Compiled regular expressions are cached for better performance
 - ✅ **Hot Config Reload**: Supports configuration updates without restarting the daemon
 
+## focus_command_once Feature
+
+The `focus_command_once` option allows you to execute `focus_command` only once per rule, rather than once per window. This is particularly useful for applications that:
+
+- Create temporary or initial windows with generic titles (e.g., Firefox's initial window titled "Mozilla Firefox")
+- Spawn multiple child windows where you only want to execute the command on the first match
+- Use applications like Wolfram Mathematica that create windows that should be properly floated before reaching the main interface
+
+**How it works**: When `focus_command_once = true`, the `focus_command` is executed only the first time any window matches the rule. Subsequent windows matching the same rule will not trigger the command again. The tracking is at the rule level, meaning different windows matching the same rule will all share the same execution status.
+
+**Example use case**: See [issue #1](https://github.com/Asthestarsfalll/piri/issues/1).
+
 ## Notes
 
 1. **Rule Order Matters**: The first matching rule is applied, subsequent rules are not checked
 2. **Non-existent Workspace**: If the specified workspace doesn't exist, a warning is logged but no error is raised
 3. **Regex Performance**: Recommend using simple and clear patterns for better performance
+4. **focus_command_once is Rule-level**: The tracking is per rule, not per window. Once a rule's `focus_command` has been executed (when `focus_command_once = true`), it won't execute again for any subsequent windows matching that rule

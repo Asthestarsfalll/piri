@@ -214,6 +214,12 @@ open_on_workspace = "browser"
 title = ".*Chrome.*"
 focus_command = "notify-send 'Chrome focused'"
 
+# focus_command 仅对规则全局执行一次（规则级别，非窗口级别）
+[[window_rule]]
+app_id = "firefox"
+focus_command = "notify-send 'Firefox focused'"
+focus_command_once = true
+
 # app_id 作为列表（任意一个匹配即可）
 [[window_rule]]
 app_id = ["code", "code-oss", "codium"]
@@ -224,6 +230,15 @@ open_on_workspace = "dev"
 title = [".*Chrome.*", ".*Chromium.*", ".*Google Chrome.*"]
 open_on_workspace = "browser"
 ```
+
+**特性**：
+- 正则表达式模式匹配支持
+- 根据 `app_id` 或 `title` 匹配，或两者组合（OR 逻辑）
+- 支持模式列表：`app_id` 和 `title` 可以是列表，任意一个匹配即可触发规则
+- 支持 workspace 名称或索引匹配
+- 焦点触发的命令执行，内置去重机制
+- `focus_command_once` 选项：对每个规则全局仅执行一次 `focus_command`（参见 [issue #1](https://github.com/Asthestarsfalll/piri/issues/1)）
+- 纯事件驱动，实时响应窗口创建
 
 详细说明请参考 [Window Rule 文档](docs/zh/plugins/window_rule.md) 和 [窗口匹配机制文档](docs/zh/window_matching.md)。
 

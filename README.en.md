@@ -197,6 +197,17 @@ app_id = "code"
 title = ".*VS Code.*"
 open_on_workspace = "dev"
 
+# Only focus_command, don't move window
+[[window_rule]]
+title = ".*Chrome.*"
+focus_command = "notify-send 'Chrome focused'"
+
+# Execute focus_command only once per rule (rule-level, not window-level)
+[[window_rule]]
+app_id = "firefox"
+focus_command = "notify-send 'Firefox focused'"
+focus_command_once = true
+
 # app_id as a list (any one matches)
 [[window_rule]]
 app_id = ["code", "code-oss", "codium"]
@@ -213,6 +224,8 @@ open_on_workspace = "browser"
 - Match by `app_id` or `title`, or both combined (OR logic)
 - Support for lists of patterns: `app_id` and `title` can be lists, any one match triggers the rule
 - Support workspace name or index matching
+- Focus-triggered command execution with built-in de-duplication mechanism
+- `focus_command_once` option: execute `focus_command` only once per rule globally (see [issue #1](https://github.com/Asthestarsfalll/piri/issues/1))
 - Pure event-driven, real-time response to window creation
 
 For detailed documentation, please refer to the [Window Rule documentation](docs/en/plugins/window_rule.md).

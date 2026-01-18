@@ -238,6 +238,9 @@ pub struct WindowRuleConfig {
     pub open_on_workspace: Option<String>,
     /// Command to execute when a matching window is focused (optional)
     pub focus_command: Option<String>,
+    /// If true, focus_command will only execute on the first focus (default: false)
+    #[serde(default)]
+    pub focus_command_once: bool,
 }
 
 pub(crate) fn deserialize_string_or_vec<'de, D>(

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use log::info;
 use niri_ipc::Event;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -46,11 +47,24 @@ pub struct WindowRulePlugin {
     last_focused_window: Option<u64>,
     /// Last time a focus command was executed
     last_execution_time: Option<Instant>,
+    /// Set of rule indices that have already executed focus_command (when focus_command_once is true)
+    executed_rules: HashSet<usize>,
 }
 
 impl WindowRulePlugin {
     /// Execute focus command with de-duplication
-    async fn execute_focus_rule(&mut self, window_id: u64, focus_command: &str) -> Result<()> {
+    async fn execute_focus_rule(
+        &mut self,
+        window_id: u64,
+        focus_command: &str,
+        rule_index: usize,
+        focus_once: bool,
+    ) -> Result<()> {
+        // If focus_once is true and this rule has already executed focus_command, skip
+        if focus_once && self.executed_rules.contains(&rule_index) {
+            return Ok(());
+        }
+
         let now = Instant::now();
         if let (Some(last_id), Some(last_time)) =
             (self.last_focused_window, self.last_execution_time)
@@ -66,6 +80,11 @@ impl WindowRulePlugin {
         );
         window_utils::execute_command(focus_command)?;
 
+        // Mark this rule as having executed focus_command if focus_once is true
+        if focus_once {
+            self.executed_rules.insert(rule_index);
+        }
+
         self.last_focused_window = Some(window_id);
         self.last_execution_time = Some(now);
         Ok(())
@@ -80,7 +99,7 @@ impl WindowRulePlugin {
             .ok_or_else(|| anyhow::anyhow!("Focused window {} not found", window_id))?;
 
         let rules = self.config.rules.clone();
-        for rule in &rules {
+        for (rule_index, rule) in rules.iter().enumerate() {
             if let Some(ref focus_command) = rule.focus_command {
                 let matcher = WindowMatcher::new(rule.app_id.clone(), rule.title.clone());
                 if self
@@ -88,7 +107,13 @@ impl WindowRulePlugin {
                     .matches(window.app_id.as_ref(), Some(&window.title), &matcher)
                     .await?
                 {
-                    self.execute_focus_rule(window_id, focus_command).await?;
+                    self.execute_focus_rule(
+                        window_id,
+                        focus_command,
+                        rule_index,
+                        rule.focus_command_once,
+                    )
+                    .await?;
                     return Ok(());
                 }
             }
@@ -99,7 +124,7 @@ impl WindowRulePlugin {
 
     async fn handle_window_opened(&mut self, window: &niri_ipc::Window) -> Result<()> {
         let rules = self.config.rules.clone();
-        for rule in &rules {
+        for (rule_index, rule) in rules.iter().enumerate() {
             let matcher = WindowMatcher::new(rule.app_id.clone(), rule.title.clone());
             if self
                 .matcher_cache
@@ -130,7 +155,13 @@ impl WindowRulePlugin {
 
                 // 2. Execute focus command if specified (unified de-duplication)
                 if let Some(ref focus_command) = rule.focus_command {
-                    self.execute_focus_rule(window.id, focus_command).await?;
+                    self.execute_focus_rule(
+                        window.id,
+                        focus_command,
+                        rule_index,
+                        rule.focus_command_once,
+                    )
+                    .await?;
                 }
 
                 // Only apply the first matching rule
@@ -156,6 +187,7 @@ impl crate::plugins::Plugin for WindowRulePlugin {
             matcher_cache: Arc::new(WindowMatcherCache::new()),
             last_focused_window: None,
             last_execution_time: None,
+            executed_rules: HashSet::new(),
         }
     }
 
@@ -189,6 +221,8 @@ impl crate::plugins::Plugin for WindowRulePlugin {
         );
         self.config = config;
         self.matcher_cache.clear_cache().await;
+        // Clear executed rules tracking since rule indices may have changed
+        self.executed_rules.clear();
         Ok(())
     }
 }
