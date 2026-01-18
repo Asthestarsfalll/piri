@@ -76,6 +76,8 @@ pub struct Config {
     pub window_rule: Vec<WindowRuleConfig>,
     #[serde(default)]
     pub window_order: HashMap<String, u32>,
+    #[serde(default)]
+    pub swallow: Vec<crate::plugins::swallow::SwallowRule>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,6 +96,30 @@ impl Default for WindowOrderSection {
             enable_event_listener: default_enable_event_listener(),
             default_weight: default_window_order_weight(),
             workspaces: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SwallowSection {
+    #[serde(default)]
+    pub rules: Vec<crate::plugins::swallow::SwallowRule>,
+    #[serde(default = "default_true")]
+    pub use_pid_matching: bool,
+    #[serde(default)]
+    pub exclude: Option<crate::plugins::swallow::SwallowExclude>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for SwallowSection {
+    fn default() -> Self {
+        Self {
+            rules: Vec::new(),
+            use_pid_matching: default_true(),
+            exclude: None,
         }
     }
 }
@@ -118,6 +144,8 @@ pub struct PiriConfig {
     pub plugins: PluginsConfig,
     #[serde(default)]
     pub window_order: WindowOrderSection,
+    #[serde(default)]
+    pub swallow: SwallowSection,
 }
 
 impl Default for PiriConfig {
@@ -126,6 +154,7 @@ impl Default for PiriConfig {
             scratchpad: ScratchpadDefaults::default(),
             plugins: PluginsConfig::default(),
             window_order: WindowOrderSection::default(),
+            swallow: SwallowSection::default(),
         }
     }
 }
@@ -144,6 +173,8 @@ pub struct PluginsConfig {
     pub singleton: Option<bool>,
     #[serde(default)]
     pub window_order: Option<bool>,
+    #[serde(default)]
+    pub swallow: Option<bool>,
     #[serde(rename = "empty_config", default)]
     pub empty_config: Option<EmptyPluginConfig>,
 }
@@ -157,6 +188,7 @@ impl Default for PluginsConfig {
             autofill: None,
             singleton: None,
             window_order: None,
+            swallow: None,
             empty_config: None,
         }
     }
@@ -208,7 +240,9 @@ pub struct WindowRuleConfig {
     pub focus_command: Option<String>,
 }
 
-fn deserialize_string_or_vec<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+pub(crate) fn deserialize_string_or_vec<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<String>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -327,6 +361,7 @@ impl PluginsConfig {
             "autofill" => self.autofill.unwrap_or(false),
             "singleton" => self.singleton.unwrap_or(false),
             "window_order" => self.window_order.unwrap_or(false),
+            "swallow" => self.swallow.unwrap_or(false),
             _ => false,
         }
     }
@@ -350,6 +385,7 @@ impl Default for Config {
             singleton: HashMap::new(),
             window_rule: Vec::new(),
             window_order: HashMap::new(),
+            swallow: Vec::new(),
         }
     }
 }

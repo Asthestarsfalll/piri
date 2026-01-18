@@ -15,6 +15,7 @@ window_rule = true
 autofill = true
 singleton = true
 window_order = true
+swallow = true
 
 [piri.scratchpad]
 default_size = "40% 60%"
@@ -118,3 +119,17 @@ default_weight = 0
 google-chrome = 100
 code = 80
 ghostty = 70
+
+[piri.swallow]
+use_pid_matching=false
+
+[piri.swallow.exclude]
+app_id = ".*mpv*."
+
+[[swallow]]
+child_app_id='.*google-chrome.*'
+parent_app_id='.*ghostty.*'
+
+[[swallow]]
+child_app_id='.*firefox*.'
+parent_app_id='.*ghostty.*'

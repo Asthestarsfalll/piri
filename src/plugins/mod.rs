@@ -2,6 +2,7 @@ pub mod autofill;
 pub mod empty;
 pub mod scratchpads;
 pub mod singleton;
+pub mod swallow;
 pub mod window_order;
 pub mod window_rule;
 pub mod window_utils;
@@ -139,6 +140,7 @@ register_plugins! {
     "singleton"    => Singleton(singleton::SingletonPlugin),
     "window_order" => WindowOrder(window_order::WindowOrderPlugin),
     "autofill"     => Autofill(autofill::AutofillPlugin),
+    "swallow"      => Swallow(swallow::SwallowPlugin),
 }
 
 pub struct PluginManager {

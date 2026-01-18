@@ -14,6 +14,7 @@ Piri 是基于 Rust 的 [Niri](https://github.com/YaLTeR/niri) 高性能功能�
 - 🔄 **Autofill**: 布局自动对齐。在窗口关闭或布局变动时自动对齐剩余窗口，时刻保持界面整洁（详见 [Autofill 文档](docs/zh/plugins/autofill.md)）
 - 🔒 **Singleton**: 单实例保障。确保特定应用全局唯一，支持快速聚焦现有实例或自动拉起新进程（详见 [Singleton 文档](docs/zh/plugins/singleton.md)）
 - 📋 **Window Order**: 智能窗口排序。根据配置权重自动重排平铺窗口，相同权重窗口保持相对位置以最小化移动损耗（详见 [Window Order 文档](docs/zh/plugins/window_order.md)）
+- 🍽️ **Swallow**: 窗口吞噬机制。当子窗口打开时自动隐藏父窗口，让子窗口在布局中替换父窗口的位置（详见 [Swallow 文档](docs/zh/plugins/swallow.md)）
 
 ## 窗口匹配机制
 
@@ -315,6 +316,43 @@ piri window_order toggle
 - 支持 `app_id` 部分匹配
 
 详细说明请参考 [Window Order 文档](docs/zh/plugins/window_order.md)。
+
+### Swallow
+
+![Swallow](./assets/autofill_1.mp4)
+
+当子窗口打开时自动隐藏父窗口，让子窗口在布局中替换父窗口的位置。这对于终端启动图片查看器或媒体播放器等场景非常有用。
+
+**配置示例**：
+```toml
+[piri.plugins]
+swallow = true
+
+[piri.swallow]
+use_pid_matching = true  # 启用基于 PID 的父子进程匹配（默认：true）
+
+# 全局排除规则（可选）
+[piri.swallow.exclude]
+app_id = [".*dialog.*"]
+
+# 规则列表
+[[swallow]]
+parent_app_id = [".*terminal.*", ".*alacritty.*", ".*foot.*", ".*ghostty.*"]
+child_app_id = [".*mpv.*", ".*imv.*", ".*feh.*"]
+
+[[swallow]]
+parent_app_id = ["code", "nvim-qt"]
+child_app_id = [".*preview.*", ".*markdown.*"]
+```
+
+**特性**：
+- 支持基于 PID 的父子进程匹配（默认启用）
+- 支持基于规则的匹配（通过 `app_id`、`title` 或 `pid` 模式）
+- 支持全局和规则级别的排除规则
+- 智能聚焦窗口队列，自动查找父窗口
+- 自动处理工作空间移动和浮动窗口转换
+
+详细说明请参考 [Swallow 文档](docs/zh/plugins/swallow.md)。
 
 ## 文档
 

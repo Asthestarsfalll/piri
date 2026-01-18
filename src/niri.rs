@@ -24,13 +24,13 @@ struct NiriIpcInner {
 pub struct Window {
     pub id: u64,
     pub title: String,
-    #[serde(rename = "app_id")]
+    #[serde(default)]
     pub app_id: Option<String>,
     #[serde(default)]
     pub class: Option<String>,
     #[serde(rename = "is_floating")]
     pub floating: bool,
-    #[serde(rename = "workspace_id")]
+    #[serde(default)]
     pub workspace_id: Option<u64>,
     #[serde(default)]
     pub workspace: Option<String>,
@@ -38,6 +38,8 @@ pub struct Window {
     pub output: Option<String>,
     #[serde(default)]
     pub layout: Option<WindowLayout>,
+    #[serde(default)]
+    pub pid: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,6 +224,7 @@ impl NiriIpc {
                                 ]),
                                 pos_in_scrolling_layout: w.layout.pos_in_scrolling_layout,
                             }),
+                            pid: w.pid.map(|p| p as u32),
                         }
                     })
                     .collect();
@@ -237,6 +240,35 @@ impl NiriIpc {
             Response::Workspaces(workspaces) => Ok(workspaces),
             _ => anyhow::bail!("Unexpected response type for Workspaces request"),
         }
+    }
+
+    /// Convert a single niri_ipc::Window to our Window type
+    pub async fn convert_window(&self, niri_window: &niri_ipc::Window) -> Result<Window> {
+        let workspaces = self.get_workspaces_for_mapping().await?;
+
+        let workspace = niri_window
+            .workspace_id
+            .and_then(|id| workspaces.iter().find(|ws| ws.id == id).map(|ws| ws.idx.to_string()));
+
+        Ok(Window {
+            id: niri_window.id,
+            title: niri_window.title.clone().unwrap_or_default(),
+            app_id: niri_window.app_id.clone(),
+            class: None, // niri_ipc::Window doesn't have class field
+            floating: niri_window.is_floating,
+            workspace_id: niri_window.workspace_id,
+            workspace,
+            output: None, // niri_ipc::Window doesn't have output field directly
+            layout: Some(WindowLayout {
+                tile_pos: niri_window.layout.tile_pos_in_workspace_view.map(|(x, y)| [x, y]),
+                window_size: Some([
+                    niri_window.layout.window_size.0 as u32,
+                    niri_window.layout.window_size.1 as u32,
+                ]),
+                pos_in_scrolling_layout: niri_window.layout.pos_in_scrolling_layout,
+            }),
+            pid: niri_window.pid.map(|p| p as u32),
+        })
     }
 
     /// Get all workspaces (public method for plugins)

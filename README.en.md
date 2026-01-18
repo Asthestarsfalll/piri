@@ -14,6 +14,7 @@ Piri is a high-performance [Niri](https://github.com/YaLTeR/niri) extension tool
 - 🔄 **Autofill**: Layout auto-alignment. Automatically aligns remaining windows when a window is closed or layout changes, keeping your interface clean (see [Autofill Docs](docs/en/plugins/autofill.md))
 - 🔒 **Singleton**: Single-instance assurance. Ensures specific applications remain globally unique, supporting quick focus or automatic process launching (see [Singleton Docs](docs/en/plugins/singleton.md))
 - 📋 **Window Order**: Intelligent reordering. Automatically reorders tiled windows based on configured weights, preserving relative positions for identical weights to minimize movement (see [Window Order Docs](docs/en/plugins/window_order.md))
+- 🍽️ **Swallow**: Window swallowing mechanism. Automatically hides parent windows when child windows are opened, allowing child windows to replace parent windows in the layout (see [Swallow Docs](docs/en/plugins/swallow.md))
 
 
 ## Quick Start
@@ -305,6 +306,44 @@ piri window_order toggle
 - Supports partial matching of `app_id`
 
 For detailed documentation, please refer to the [Window Order documentation](docs/en/plugins/window_order.md).
+
+### Swallow
+
+![Swallow](./assets/autofill_1.mp4)
+
+Automatically hides parent windows when child windows are opened, allowing child windows to replace parent windows in the layout. This is useful for scenarios like terminals spawning image viewers or media players.
+
+**Configuration Example**:
+```toml
+[piri.plugins]
+swallow = true
+
+[piri.swallow]
+use_pid_matching = true  # Enable PID-based parent-child process matching (default: true)
+
+# Global exclude rule (optional)
+[piri.swallow.exclude]
+app_id = [".*dialog.*"]
+
+# Rules list
+[[swallow]]
+parent_app_id = [".*terminal.*", ".*alacritty.*", ".*foot.*", ".*ghostty.*"]
+child_app_id = [".*mpv.*", ".*imv.*", ".*feh.*"]
+exclude_child_app_id = [".*dialog.*", ".*error.*"]
+
+[[swallow]]
+parent_app_id = ["code", "nvim-qt"]
+child_app_id = [".*preview.*", ".*markdown.*"]
+```
+
+**Features**:
+- Supports PID-based parent-child process matching (enabled by default)
+- Supports rule-based matching (via `app_id`, `title`, or `pid` patterns)
+- Supports global and rule-level exclude rules
+- Intelligent focus window queue for automatic parent window discovery
+- Automatically handles workspace movement and floating window conversion
+
+For detailed documentation, please refer to the [Swallow documentation](docs/en/plugins/swallow.md).
 
 ## Documentation
 
