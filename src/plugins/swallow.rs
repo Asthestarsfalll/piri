@@ -5,6 +5,7 @@ use niri_ipc::Event;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use crate::config::{deserialize_string_or_vec, Config};
 use crate::niri::NiriIpc;
@@ -70,7 +71,7 @@ pub struct SwallowPlugin {
     niri: NiriIpc,
     config: SwallowPluginConfig,
     matcher_cache: Arc<WindowMatcherCache>,
-    window_pid_map: HashMap<u32, Vec<u64>>,
+    window_pid_map: Arc<Mutex<HashMap<u32, Vec<u64>>>>,
     focused_window_queue: VecDeque<u64>,
 }
 
@@ -80,22 +81,40 @@ impl SwallowPlugin {
             "Swallow plugin initialized with {} rules",
             config.rules.len()
         );
+        let window_pid_map = Arc::new(Mutex::new(HashMap::new()));
+        let window_pid_map_clone = window_pid_map.clone();
+        let niri_clone = niri.clone();
+
+        // Perform initial scan in background task on plugin startup
+        tokio::spawn(async move {
+            info!("Performing initial scan for swallow plugin on startup");
+            if let Err(e) = Self::perform_initial_scan(niri_clone, window_pid_map_clone).await {
+                warn!("Failed to perform initial scan for swallow plugin: {}", e);
+            } else {
+                debug!("Initial scan completed for swallow plugin");
+            }
+        });
+
         Self {
             niri,
             config,
             matcher_cache: Arc::new(WindowMatcherCache::new()),
-            window_pid_map: HashMap::new(),
+            window_pid_map,
             focused_window_queue: VecDeque::with_capacity(5),
         }
     }
 
-    async fn initial_scan(&mut self) -> Result<()> {
+    async fn perform_initial_scan(
+        niri: NiriIpc,
+        window_pid_map: Arc<Mutex<HashMap<u32, Vec<u64>>>>,
+    ) -> Result<()> {
         debug!("Performing initial window scan for swallow plugin");
-        let windows = self.niri.get_windows().await?;
+        let windows = niri.get_windows().await?;
+        let mut map = window_pid_map.lock().await;
         for window in windows {
             match window.pid {
                 Some(pid) => {
-                    self.window_pid_map.entry(pid).or_insert_with(Vec::new).push(window.id);
+                    map.entry(pid).or_insert_with(Vec::new).push(window.id);
                 }
                 None => {
                     warn!("No PID found for window {}", window.id);
@@ -242,7 +261,8 @@ impl SwallowPlugin {
     ) -> Result<Option<crate::niri::Window>> {
         let child_pid = match child_window.pid {
             Some(pid) => {
-                self.window_pid_map.entry(pid).or_insert_with(Vec::new).push(child_window.id);
+                let mut map = self.window_pid_map.lock().await;
+                map.entry(pid).or_insert_with(Vec::new).push(child_window.id);
                 pid
             }
             None => {
@@ -313,7 +333,10 @@ impl SwallowPlugin {
                 continue;
             };
 
-            self.window_pid_map.entry(window_pid).or_insert_with(Vec::new).push(window.id);
+            {
+                let mut map = self.window_pid_map.lock().await;
+                map.entry(window_pid).or_insert_with(Vec::new).push(window.id);
+            }
 
             if ancestor_pids.contains(&window_pid) {
                 debug!(
@@ -544,12 +567,13 @@ impl SwallowPlugin {
 
     async fn handle_window_opened(&mut self, window: &niri_ipc::Window) -> Result<()> {
         let window_id = window.id;
-        if self.window_pid_map.is_empty() {
-            let _ = self.initial_scan().await;
-        }
 
         // If ID is already in the map, it's a Changed event, skip it.
-        if self.window_pid_map.values().any(|window_ids| window_ids.contains(&window_id)) {
+        let should_skip = {
+            let map = self.window_pid_map.lock().await;
+            map.values().any(|window_ids| window_ids.contains(&window_id))
+        };
+        if should_skip {
             debug!(
                 "Window {} already in map, skipping (Changed event)",
                 window_id
@@ -565,7 +589,8 @@ impl SwallowPlugin {
                     "Stored PID {} for window {} (app_id={:?}, title={}) in window_pid_map",
                     pid, window_id, child_window.app_id, child_window.title
                 );
-                self.window_pid_map.entry(pid).or_insert_with(Vec::new).push(window_id);
+                let mut map = self.window_pid_map.lock().await;
+                map.entry(pid).or_insert_with(Vec::new).push(window_id);
             }
             None => {
                 warn!("No PID found for window {}", window_id);
@@ -700,11 +725,14 @@ impl crate::plugins::Plugin for SwallowPlugin {
             }
             Event::WindowClosed { id } => {
                 // Remove window id from all pid entries
-                self.window_pid_map.values_mut().for_each(|window_ids| {
-                    window_ids.retain(|&window_id| window_id != *id);
-                });
-                // Remove empty pid entries
-                self.window_pid_map.retain(|_, window_ids| !window_ids.is_empty());
+                {
+                    let mut map = self.window_pid_map.lock().await;
+                    map.values_mut().for_each(|window_ids| {
+                        window_ids.retain(|&window_id| window_id != *id);
+                    });
+                    // Remove empty pid entries
+                    map.retain(|_, window_ids| !window_ids.is_empty());
+                }
 
                 // Remove window id from focused window queue
                 self.focused_window_queue.retain(|&window_id| window_id != *id);
