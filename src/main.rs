@@ -78,6 +78,9 @@ enum ScratchpadAction {
     Add {
         /// Direction from which the scratchpad appears (e.g., "fromTop", "fromBottom", "fromLeft", "fromRight")
         direction: String,
+        /// If true, swallow the scratchpad window to the focused window when shown
+        #[arg(long)]
+        swallow_to_focus: bool,
     },
 }
 
@@ -178,12 +181,16 @@ async fn async_main() -> Result<()> {
                         "Failed to toggle scratchpad",
                     )?;
                 }
-                ScratchpadAction::Add { direction } => {
+                ScratchpadAction::Add {
+                    direction,
+                    swallow_to_focus,
+                } => {
                     handle_ipc_response(
                         client
                             .send_request(IpcRequest::ScratchpadAdd {
                                 name: name.clone(),
                                 direction: direction.clone(),
+                                swallow_to_focus,
                             })
                             .await,
                         &format!("Scratchpad '{}' added with direction '{}'", name, direction),

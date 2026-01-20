@@ -3,13 +3,15 @@ use async_trait::async_trait;
 use log::{debug, info, warn};
 use niri_ipc::Event;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::config::{deserialize_string_or_vec, Config};
 use crate::niri::NiriIpc;
-use crate::plugins::window_utils::{get_focused_window, WindowMatcher, WindowMatcherCache};
+use crate::plugins::window_utils::{
+    get_focused_window, matches_window, perform_swallow, try_pid_matching, WindowMatcherCache,
+};
 use crate::plugins::FromConfig;
 use crate::utils::send_notification;
 
@@ -137,12 +139,13 @@ impl SwallowPlugin {
         }
 
         // Check if window matches exclude app_id and title
-        self.matches_window(
+        matches_window(
             window,
             exclude.app_id.as_ref(),
             exclude.title.as_ref(),
             None,
             None,
+            &self.matcher_cache,
         )
         .await
     }
@@ -178,15 +181,15 @@ impl SwallowPlugin {
             "Checking child window against rule patterns: app_id={:?}, title={:?}",
             rule.child_app_id, rule.child_title
         );
-        let matches_window_criteria = self
-            .matches_window(
-                child_window,
-                rule.child_app_id.as_ref(),
-                rule.child_title.as_ref(),
-                None,
-                None,
-            )
-            .await?;
+        let matches_window_criteria = matches_window(
+            child_window,
+            rule.child_app_id.as_ref(),
+            rule.child_title.as_ref(),
+            None,
+            None,
+            &self.matcher_cache,
+        )
+        .await?;
 
         if !matches_window_criteria {
             return Ok(false);
@@ -198,243 +201,6 @@ impl SwallowPlugin {
             window_id, child_window.app_id, child_window.title
         );
         Ok(true)
-    }
-
-    /// Check if a window matches the given matcher (considering exclude rules)
-    async fn matches_window(
-        &self,
-        window: &crate::niri::Window,
-        app_id_patterns: Option<&Vec<String>>,
-        title_patterns: Option<&Vec<String>>,
-        exclude_app_id_patterns: Option<&Vec<String>>,
-        exclude_title_patterns: Option<&Vec<String>>,
-    ) -> Result<bool> {
-        // First check exclude rules
-        if let Some(exclude_patterns) = exclude_app_id_patterns {
-            let exclude_matcher = WindowMatcher::new(Some(exclude_patterns.clone()), None);
-            if self
-                .matcher_cache
-                .matches(
-                    window.app_id.as_ref(),
-                    Some(&window.title),
-                    &exclude_matcher,
-                )
-                .await?
-            {
-                return Ok(false);
-            }
-        }
-
-        if let Some(exclude_patterns) = exclude_title_patterns {
-            let exclude_matcher = WindowMatcher::new(None, Some(exclude_patterns.clone()));
-            if self
-                .matcher_cache
-                .matches(
-                    window.app_id.as_ref(),
-                    Some(&window.title),
-                    &exclude_matcher,
-                )
-                .await?
-            {
-                return Ok(false);
-            }
-        }
-
-        // If no include patterns specified, match all (unless excluded)
-        if app_id_patterns.is_none() && title_patterns.is_none() {
-            return Ok(true);
-        }
-
-        // Check include patterns
-        let matcher = WindowMatcher::new(app_id_patterns.cloned(), title_patterns.cloned());
-        self.matcher_cache
-            .matches(window.app_id.as_ref(), Some(&window.title), &matcher)
-            .await
-    }
-
-    /// Try to find parent window using PID-based matching.
-    /// Checks if any window's PID is in the child window's ancestor process tree.
-    async fn try_pid_matching(
-        &mut self,
-        child_window: &crate::niri::Window,
-        windows: &[crate::niri::Window],
-    ) -> Result<Option<crate::niri::Window>> {
-        let child_pid = match child_window.pid {
-            Some(pid) => {
-                let mut map = self.window_pid_map.lock().await;
-                map.entry(pid).or_insert_with(Vec::new).push(child_window.id);
-                pid
-            }
-            None => {
-                debug!("No PID found for child window {}", child_window.id);
-                return Ok(None);
-            }
-        };
-
-        debug!(
-            "Trying PID matching: child window {} (app_id={:?}, title={}) has PID {}",
-            child_window.id, child_window.app_id, child_window.title, child_pid
-        );
-
-        // Build ancestor process tree set for O(1) lookup
-        let mut ancestor_pids = HashSet::new();
-        let mut current_pid = child_pid;
-        let mut ancestor_list = Vec::new();
-
-        loop {
-            let stat_path = format!("/proc/{}/stat", current_pid);
-            let stat = match tokio::fs::read_to_string(&stat_path).await {
-                Ok(stat) => stat,
-                Err(_) => break,
-            };
-
-            let fields: Vec<&str> = stat.split_whitespace().collect();
-            if fields.len() < 4 {
-                break;
-            }
-
-            let p_pid = match fields[3].parse::<u32>() {
-                Ok(pid) => pid,
-                Err(_) => break,
-            };
-
-            if p_pid == 0 || p_pid == 1 {
-                break;
-            }
-
-            ancestor_pids.insert(p_pid);
-            ancestor_list.push(p_pid);
-            current_pid = p_pid;
-        }
-
-        if !ancestor_list.is_empty() {
-            let mut log_parts = Vec::new();
-            for &pid in &ancestor_list {
-                let comm = tokio::fs::read_to_string(format!("/proc/{}/comm", pid))
-                    .await
-                    .map(|s| s.trim().to_string())
-                    .unwrap_or_else(|_| "unknown".to_string());
-                log_parts.push(format!("{} ({})", pid, comm));
-            }
-            debug!(
-                "Process tree PIDs for child {}: {}",
-                child_window.id,
-                log_parts.join(" -> ")
-            );
-        }
-
-        // Search for parent window whose PID is in the ancestor tree
-        for window in windows {
-            if window.id == child_window.id {
-                continue;
-            }
-
-            let Some(window_pid) = window.pid else {
-                continue;
-            };
-
-            {
-                let mut map = self.window_pid_map.lock().await;
-                map.entry(window_pid).or_insert_with(Vec::new).push(window.id);
-            }
-
-            if ancestor_pids.contains(&window_pid) {
-                debug!(
-                    "Found parent window {} (app_id={:?}, title={}) in process tree (PID: {})",
-                    window.id, window.app_id, window.title, window_pid
-                );
-                return Ok(Some(window.clone()));
-            }
-        }
-
-        Ok(None)
-    }
-
-    /// Perform swallow operation on a parent window
-    async fn perform_swallow(
-        &self,
-        parent_window: &crate::niri::Window,
-        child_window: &crate::niri::Window,
-        child_window_id: u64,
-    ) -> Result<()> {
-        // Prepare workspace reference if needed
-        let workspace_ref = if let Some(workspace_id) = parent_window.workspace_id {
-            if child_window.workspace_id != Some(workspace_id) {
-                let workspaces = self.niri.get_workspaces_for_mapping().await?;
-                if let Some(workspace) = workspaces.iter().find(|ws| ws.id == workspace_id) {
-                    Some(
-                        workspace
-                            .name
-                            .as_ref()
-                            .cloned()
-                            .unwrap_or_else(|| workspace.idx.to_string()),
-                    )
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        // Copy values needed in the closure to avoid lifetime issues
-        let parent_window_id = parent_window.id;
-        let child_is_floating = child_window.floating;
-
-        // Batch all actions together for faster execution
-        self.niri
-            .execute_batch(move |socket| {
-                use niri_ipc::{Action, Reply, Request, WorkspaceReferenceArg};
-
-                // 1. Focus parent window first
-                match socket.send(Request::Action(Action::FocusWindow {
-                    id: parent_window_id,
-                }))? {
-                    Reply::Ok(_) => {}
-                    Reply::Err(err) => anyhow::bail!("Failed to focus parent window: {}", err),
-                }
-
-                // 2. Ensure child window is not floating (floating windows cannot be swallowed into columns)
-                if child_is_floating {
-                    let _ = socket.send(Request::Action(Action::MoveWindowToTiling {
-                        id: Some(child_window_id),
-                    }))?;
-                }
-
-                // 3. Move child window to parent's workspace if needed
-                // To ensure they are neighbors (required for ConsumeOrExpelWindowLeft)
-                if let Some(workspace_ref_str) = workspace_ref.as_ref() {
-                    let workspace_ref_arg = if let Ok(idx) = workspace_ref_str.parse::<u8>() {
-                        WorkspaceReferenceArg::Index(idx)
-                    } else if let Ok(id) = workspace_ref_str.parse::<u64>() {
-                        WorkspaceReferenceArg::Id(id)
-                    } else {
-                        WorkspaceReferenceArg::Name(workspace_ref_str.clone())
-                    };
-                    let _ = socket.send(Request::Action(Action::MoveWindowToWorkspace {
-                        window_id: Some(child_window_id),
-                        reference: workspace_ref_arg,
-                        focus: false,
-                    }))?;
-                }
-
-                // 4. Consume child window into parent's column
-                let _ = socket.send(Request::Action(Action::ConsumeOrExpelWindowLeft {
-                    id: Some(child_window_id),
-                }))?;
-
-                // 5. Focus child window
-                let _ = socket.send(Request::Action(Action::FocusWindow {
-                    id: child_window_id,
-                }))?;
-
-                Ok::<(), anyhow::Error>(())
-            })
-            .await?;
-
-        Ok(())
     }
 
     /// Check if the currently focused window matches the parent window rule
@@ -493,15 +259,15 @@ impl SwallowPlugin {
                 }
 
                 // Check if this window matches parent criteria
-                let matches_window_criteria = self
-                    .matches_window(
-                        &prev_window,
-                        rule.parent_app_id.as_ref(),
-                        rule.parent_title.as_ref(),
-                        None,
-                        None,
-                    )
-                    .await?;
+                let matches_window_criteria = matches_window(
+                    &prev_window,
+                    rule.parent_app_id.as_ref(),
+                    rule.parent_title.as_ref(),
+                    None,
+                    None,
+                    &self.matcher_cache,
+                )
+                .await?;
 
                 if !matches_window_criteria {
                     debug!(
@@ -538,15 +304,15 @@ impl SwallowPlugin {
             "Checking if focused window {} matches parent criteria (app_id={:?}, title={:?})",
             focused_window.id, rule.parent_app_id, rule.parent_title
         );
-        let matches_window_criteria = self
-            .matches_window(
-                &focused_window,
-                rule.parent_app_id.as_ref(),
-                rule.parent_title.as_ref(),
-                None,
-                None,
-            )
-            .await?;
+        let matches_window_criteria = matches_window(
+            &focused_window,
+            rule.parent_app_id.as_ref(),
+            rule.parent_title.as_ref(),
+            None,
+            None,
+            &self.matcher_cache,
+        )
+        .await?;
 
         if !matches_window_criteria {
             warn!(
@@ -630,8 +396,10 @@ impl SwallowPlugin {
         // Priority 1: Try PID matching first (if enabled)
         if self.config.use_pid_matching {
             let windows = self.niri.get_windows().await?;
-            if let Some(parent_window) = self.try_pid_matching(&child_window, &windows).await? {
-                self.perform_swallow(&parent_window, &child_window, window_id).await?;
+            if let Some(parent_window) =
+                try_pid_matching(&child_window, &windows, self.window_pid_map.clone()).await?
+            {
+                perform_swallow(&self.niri, &parent_window, &child_window, window_id).await?;
                 return Ok(());
             }
             debug!(
@@ -671,7 +439,7 @@ impl SwallowPlugin {
                         "Found matching parent window {} for rule {}, performing swallow",
                         parent_window.id, rule_idx
                     );
-                    self.perform_swallow(&parent_window, &child_window, window_id).await?;
+                    perform_swallow(&self.niri, &parent_window, &child_window, window_id).await?;
                     return Ok(()); // Only apply first matching rule
                 }
                 None => {

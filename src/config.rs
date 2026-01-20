@@ -301,6 +301,9 @@ pub struct ScratchpadConfig {
     pub size: String,
     /// Margin from the edge in pixels
     pub margin: u32,
+    /// If true, swallow the scratchpad window to the focused window when shown
+    #[serde(default)]
+    pub swallow_to_focus: bool,
 }
 
 impl ScratchpadConfig {
@@ -430,12 +433,16 @@ impl TryFrom<toml::Table> for ScratchpadConfig {
             .ok_or_else(|| anyhow::anyhow!("Missing 'app_id' field"))?
             .to_string();
 
+        let swallow_to_focus =
+            table.get("swallow_to_focus").and_then(|v| v.as_bool()).unwrap_or(false);
+
         Ok(ScratchpadConfig {
             direction,
             command,
             app_id,
             size,
             margin,
+            swallow_to_focus,
         })
     }
 }

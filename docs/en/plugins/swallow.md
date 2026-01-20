@@ -84,6 +84,47 @@ Each rule supports the following optional parameters:
 
 5. **Pattern Lists**: When multiple patterns are provided (e.g., `parent_app_id = ["pattern1", "pattern2"]`), the rule matches if ANY pattern matches (OR logic)
 
+### Niri Configuration Requirements
+
+To ensure the Swallow plugin works correctly, you need to configure the following in your niri configuration file:
+
+```kdl
+layout {
+    default-column-display "tabbed"
+}
+```
+
+#### Child Window Handling Recommendations
+
+For a better experience, it is recommended to configure applications that may be replaced by child windows (such as `mpv`, `imv`, `feh`, etc.) using one of the following methods:
+
+> For more detailed information about configuration, please refer to [GitHub Issue #2](https://github.com/Asthestarsfalll/piri/issues/2).
+
+**Method 1: Use window-rule to set floating**
+
+Configure child window applications with `open-floating=true` in the niri configuration:
+
+```kdl
+window-rule {
+    app-id = "mpv"
+    open-floating = true
+}
+
+window-rule {
+    app-id = "imv"
+    open-floating = true
+}
+
+window-rule {
+    app-id = "feh"
+    open-floating = true
+}
+```
+
+**Method 2: Use autofill functionality**
+
+Enable the piri autofill plugin to automatically handle the layout of these windows.
+
 ## Examples
 
 ### PID-based Matching Example

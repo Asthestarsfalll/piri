@@ -46,6 +46,16 @@ app_id = "float.dropterm"
 size = "40% 60%"
 margin = 50
 
+# Example: scratchpad with swallow_to_focus enabled
+# When shown, the window will be swallowed into the currently focused window
+[scratchpads.preview]
+direction = "fromRight"
+command = "imv"
+app_id = "imv"
+size = "60% 80%"
+margin = 50
+swallow_to_focus = true  # Optional: swallow into focused window when shown
+
 
 # Window rules: automatically move windows to workspaces based on app_id or title
 # Format: [[window_rule]]

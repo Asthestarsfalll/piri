@@ -27,6 +27,14 @@ command = "gnome-calculator"
 app_id = "gnome-calculator"
 size = "50% 40%"
 margin = 100
+
+[scratchpads.preview]
+direction = "fromRight"
+command = "imv"
+app_id = "imv"
+size = "60% 80%"
+margin = 50
+swallow_to_focus = true  # Automatically swallow into focused window when shown
 ```
 
 ### Configuration Parameters
@@ -40,9 +48,10 @@ margin = 100
 - `app_id` (required): Application ID used to match windows (supports regular expressions)
 - `size` (required): Window size in format `"width% height%"`
 - `margin` (required): Margin from screen edge in pixels
+- `swallow_to_focus` (optional): If `true`, when showing, the scratchpad window will be swallowed into the currently focused window. When hiding, the window will be set to floating first, then execute the normal hide logic. Defaults to `false`
 
 > **Note**: `app_id` uses regular expression matching. If `app_id` contains special characters (such as `.`, `*`, etc.), they need to be escaped. For example: `app_id = "float\\.dropterm"`
-
+>
 > **Reference**: For detailed information about the window matching mechanism, see [Window Matching Mechanism](../window_matching.md)
 
 ## Usage
@@ -62,15 +71,18 @@ piri scratchpads calc toggle
 Quickly add the currently focused window as a scratchpad:
 
 ```bash
-piri scratchpads {name} add {direction}
+piri scratchpads {name} add {direction} [--swallow-to-focus]
 
-# Example
+# Examples
 piri scratchpads mypad add fromRight
+piri scratchpads mypad add fromRight --swallow-to-focus  # Enable swallow feature
 ```
 
 Dynamically added scratchpads will use the default size and margin set in the `[piri.scratchpad]` section.
 
-> **Note**: Dynamically added windows are only resized and positioned once during initial registration. After that, you can manually resize or move the window, and the plugin will maintain your custom size and margin (position) during subsequent show/hide toggles without overriding it.
+> **Note**:
+> - Dynamically added windows are only resized and positioned once during initial registration. After that, you can manually resize or move the window, and the plugin will maintain your custom size and margin (position) during subsequent show/hide toggles without overriding it.
+> - If the scratchpad already exists, the `add` command will automatically execute a toggle operation (show/hide) instead of reporting an error.
 
 ### Global Configuration
 
@@ -100,3 +112,4 @@ You can set global defaults in the `[piri.scratchpad]` section:
 - ✅ **Smart focus management**: Automatically focuses when showing, restores previous focus when hiding
 - ✅ **Flexible configuration**: Customize window size, position, and animation direction
 - ✅ **Dynamic addition**: Quickly add the currently focused window as a scratchpad
+- ✅ **Swallow integration**: Support swallowing scratchpad window into the currently focused window (`swallow_to_focus` option)

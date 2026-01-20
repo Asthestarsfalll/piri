@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use log::{debug, info};
+use log::{debug, info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::time::Duration;
@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 use crate::config::{Config, Direction, ScratchpadConfig};
 use crate::ipc::IpcRequest;
 use crate::niri::NiriIpc;
-use crate::plugins::window_utils::{self, WindowMatcher, WindowMatcherCache};
+use crate::plugins::window_utils::{
+    self, get_focused_window, perform_swallow, WindowMatcher, WindowMatcherCache,
+};
 use crate::plugins::FromConfig;
 use crate::utils::send_notification;
 
@@ -152,6 +154,57 @@ impl ScratchpadManager {
                 state.is_dynamic,
             )
         };
+
+        // Handle swallow_to_focus logic
+        if config.swallow_to_focus {
+            if is_visible {
+                // When showing: perform swallow to focused window
+                debug!(
+                    "Swallow to focus enabled for scratchpad '{}', performing swallow operation",
+                    name
+                );
+                let child_window = self
+                    .niri
+                    .get_windows()
+                    .await?
+                    .into_iter()
+                    .find(|w| w.id == window_id)
+                    .context("Scratchpad window not found")?;
+
+                match get_focused_window(&self.niri).await {
+                    Ok(parent_window) => {
+                        if parent_window.id != window_id {
+                            debug!(
+                                "Swallowing scratchpad window {} to focused window {}",
+                                window_id, parent_window.id
+                            );
+                            perform_swallow(&self.niri, &parent_window, &child_window, window_id)
+                                .await?;
+                            return Ok(());
+                        } else {
+                            debug!(
+                                "Scratchpad window {} is already focused, skipping swallow",
+                                window_id
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to get focused window for swallow operation: {}, falling back to normal show",
+                            e
+                        );
+                    }
+                }
+            } else {
+                // When hiding: ensure window is floating first
+                debug!(
+                    "Swallow to focus enabled for scratchpad '{}', ensuring window is floating before hide",
+                    name
+                );
+                self.niri.set_window_floating(window_id, true).await?;
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
 
         if is_visible {
             // Move to current workspace if needed
@@ -351,6 +404,7 @@ impl ScratchpadManager {
         direction: Direction,
         default_size: &str,
         default_margin: u32,
+        swallow_to_focus: bool,
     ) -> Result<()> {
         let window = window_utils::get_focused_window(&self.niri).await?;
         let app_id = window
@@ -358,21 +412,28 @@ impl ScratchpadManager {
             .clone()
             .ok_or_else(|| anyhow::anyhow!("No app_id for current window"))?;
 
+        // Check if scratchpad already exists
+        if let Some(state) = self.states.get(name) {
+            if let Some(wid) = state.window_id {
+                if window_utils::window_exists(&self.niri, wid).await? {
+                    // Window already exists, execute toggle logic
+                    debug!(
+                        "Scratchpad '{}' already exists with window {}, executing toggle",
+                        name, wid
+                    );
+                    return self.toggle(name, None, None).await;
+                }
+            }
+        }
+
         let config = ScratchpadConfig {
             direction,
             command: format!("# Window {} added dynamically", window.id),
             app_id,
             size: default_size.to_string(),
             margin: default_margin,
+            swallow_to_focus,
         };
-
-        if let Some(state) = self.states.get(name) {
-            if let Some(wid) = state.window_id {
-                if window_utils::window_exists(&self.niri, wid).await? {
-                    anyhow::bail!("Scratchpad {} already exists with window {}", name, wid);
-                }
-            }
-        }
 
         self.setup_window(window.id, &config).await?;
 
@@ -473,10 +534,14 @@ impl crate::plugins::Plugin for ScratchpadsPlugin {
                     }
                 }
             }
-            IpcRequest::ScratchpadAdd { name, direction } => {
+            IpcRequest::ScratchpadAdd {
+                name,
+                direction,
+                swallow_to_focus,
+            } => {
                 info!(
-                    "Handling scratchpad add for: {} with direction: {}",
-                    name, direction
+                    "Handling scratchpad add for: {} with direction: {}, swallow_to_focus: {}",
+                    name, direction, swallow_to_focus
                 );
 
                 let direction = Direction::from_str(direction)
@@ -488,6 +553,7 @@ impl crate::plugins::Plugin for ScratchpadsPlugin {
                         direction,
                         &self.config.default_size,
                         self.config.default_margin,
+                        *swallow_to_focus,
                     )
                     .await?;
 

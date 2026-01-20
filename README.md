@@ -126,7 +126,7 @@ piri completion fish > ~/.config/fish/completions/piri.fish
 
 ![Scratchpads](./assets/scratchpads.mp4)
 
-快速显示和隐藏常用应用程序的窗口。支持跨 workspace 和 monitor，无论你在哪个工作区或显示器上，都能快速访问你的 scratchpad 窗口。支持**动态添加窗口**、**自动保留手动调整的大小与边距**，以及**隐藏后自动移动到指定工作区**。
+快速显示和隐藏常用应用程序的窗口。支持跨 workspace 和 monitor，无论你在哪个工作区或显示器上，都能快速访问你的 scratchpad 窗口。支持**动态添加窗口**、**自动保留手动调整的大小与边距**、**隐藏后自动移动到指定工作区**，以及**将窗口吞入当前聚焦的窗口**（`swallow_to_focus` 选项）。
 
 **配置示例**：
 ```toml
@@ -144,6 +144,14 @@ command = "GTK_IM_MODULE=wayland ghostty --class=float.dropterm"
 app_id = "float.dropterm"
 size = "40% 60%"
 margin = 50
+
+[scratchpads.preview]
+direction = "fromRight"
+command = "imv"
+app_id = "imv"
+size = "60% 80%"
+margin = 50
+swallow_to_focus = true  # 显示时自动吞入当前聚焦的窗口
 ```
 
 **快速使用**：
@@ -152,10 +160,16 @@ margin = 50
 piri scratchpads {name} toggle
 
 # 动态添加当前窗口为 scratchpad
-piri scratchpads {name} add {direction}
+piri scratchpads {name} add {direction} [--swallow-to-focus]
+
+# 示例
+piri scratchpads mypad add fromRight
+piri scratchpads mypad add fromRight --swallow-to-focus  # 启用 swallow 功能
 ```
 
-> **提示**: 动态添加的窗口仅在第一次注册时使用默认大小和边距。之后你可以手动调整窗口的大小和位置（边距），插件会自动保留这些调整。
+> **提示**:
+> - 动态添加的窗口仅在第一次注册时使用默认大小和边距。之后你可以手动调整窗口的大小和位置（边距），插件会自动保留这些调整。
+> - 如果 scratchpad 已存在，`add` 命令会自动执行 toggle 操作（显示/隐藏切换）。
 
 详细说明请参考 [Scratchpads 文档](docs/zh/plugins/scratchpads.md)。
 

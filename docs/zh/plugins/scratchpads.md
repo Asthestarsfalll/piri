@@ -27,6 +27,14 @@ command = "gnome-calculator"
 app_id = "gnome-calculator"
 size = "50% 40%"
 margin = 100
+
+[scratchpads.preview]
+direction = "fromRight"
+command = "imv"
+app_id = "imv"
+size = "60% 80%"
+margin = 50
+swallow_to_focus = true  # 显示时自动吞入当前聚焦的窗口
 ```
 
 ### 配置参数
@@ -40,6 +48,7 @@ margin = 100
 - `app_id` (必需): 用于匹配窗口的应用 ID（支持正则表达式，详见下方说明）
 - `size` (必需): 窗口大小，格式为 `"width% height%"`
 - `margin` (必需): 距离屏幕边缘的边距（像素）
+- `swallow_to_focus` (可选): 如果为 `true`，显示时将 scratchpad 窗口吞入当前聚焦的窗口。隐藏时会先让窗口浮动，再执行正常的隐藏逻辑。默认为 `false`
 
 > **窗口匹配**: `app_id` 使用正则表达式匹配。关于窗口匹配机制的详细说明（包括特殊字符转义），请参阅 [窗口匹配机制文档](../window_matching.md) 和 [插件系统通用配置说明](plugins.md#通用配置说明)
 
@@ -60,15 +69,18 @@ piri scratchpads calc toggle
 将当前聚焦的窗口快速添加为 scratchpad：
 
 ```bash
-piri scratchpads {name} add {direction}
+piri scratchpads {name} add {direction} [--swallow-to-focus]
 
 # 示例
 piri scratchpads mypad add fromRight
+piri scratchpads mypad add fromRight --swallow-to-focus  # 启用 swallow 功能
 ```
 
 动态添加的 scratchpad 会使用 `[piri.scratchpad]` 节中设置的默认大小和边距。
 
-> **提示**: 动态添加的窗口仅在第一次注册时调整大小和位置。之后你可以手动调整该窗口的大小和位置（边距），插件在后续切换显示/隐藏时会保持你手动调整后的状态，不再强制重置。
+> **提示**:
+> - 动态添加的窗口仅在第一次注册时调整大小和位置。之后你可以手动调整该窗口的大小和位置（边距），插件在后续切换显示/隐藏时会保持你手动调整后的状态，不再强制重置。
+> - 如果 scratchpad 已存在，`add` 命令会自动执行 toggle 操作（显示/隐藏切换），而不是报错。
 
 ### 全局配置说明
 
@@ -98,3 +110,4 @@ piri scratchpads mypad add fromRight
 - ✅ **智能焦点管理**: 显示时自动聚焦，隐藏时恢复之前的焦点
 - ✅ **灵活配置**: 自定义窗口大小、位置和动画方向
 - ✅ **动态添加**: 快速添加当前窗口为 scratchpad
+- ✅ **Swallow 集成**: 支持将 scratchpad 窗口吞入当前聚焦的窗口（`swallow_to_focus` 选项）

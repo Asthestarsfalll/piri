@@ -7,9 +7,17 @@ use tokio::net::{UnixListener, UnixStream};
 /// IPC message types for communication between client and daemon
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IpcRequest {
-    ScratchpadToggle { name: String },
-    ScratchpadAdd { name: String, direction: String },
-    SingletonToggle { name: String },
+    ScratchpadToggle {
+        name: String,
+    },
+    ScratchpadAdd {
+        name: String,
+        direction: String,
+        swallow_to_focus: bool,
+    },
+    SingletonToggle {
+        name: String,
+    },
     WindowOrderToggle,
     Ping,
     Shutdown,

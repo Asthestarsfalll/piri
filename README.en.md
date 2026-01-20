@@ -113,7 +113,7 @@ piri completion fish > ~/.config/fish/completions/piri.fish
 
 ![Scratchpads](./assets/scratchpads.mp4)
 
-Quickly show and hide windows of frequently used applications. Supports cross-workspace and cross-monitor, so you can quickly access your scratchpad windows regardless of which workspace or monitor you're on. Features **dynamic window addition**, **automatic retention of manual size and margin adjustments**, and **automatic moving to a specific workspace when hidden**.
+Quickly show and hide windows of frequently used applications. Supports cross-workspace and cross-monitor, so you can quickly access your scratchpad windows regardless of which workspace or monitor you're on. Features **dynamic window addition**, **automatic retention of manual size and margin adjustments**, **automatic moving to a specific workspace when hidden**, and **swallowing window into the currently focused window** (`swallow_to_focus` option).
 
 **Configuration Example**:
 ```toml
@@ -131,6 +131,14 @@ command = "GTK_IM_MODULE=wayland ghostty --class=float.dropterm"
 app_id = "float.dropterm"
 size = "40% 60%"
 margin = 50
+
+[scratchpads.preview]
+direction = "fromRight"
+command = "imv"
+app_id = "imv"
+size = "60% 80%"
+margin = 50
+swallow_to_focus = true  # Automatically swallow into focused window when shown
 ```
 
 **Quick Usage**:
