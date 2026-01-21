@@ -373,6 +373,11 @@ impl ScratchpadManager {
 
         // 2. Ensure window exists and is set up
         let window_id = self.ensure_window_id(name).await?;
+
+        // Collect all scratchpad window IDs before getting mutable borrow
+        let scratchpad_window_ids: Vec<u64> =
+            self.states.values().filter_map(|s| s.window_id).collect();
+
         let state = self.states.get_mut(name).unwrap();
 
         // 3. Determine next state
@@ -387,10 +392,28 @@ impl ScratchpadManager {
                 state.is_visible = false;
             } else {
                 // Already visible but elsewhere, re-record focus and it will be moved in sync_state
-                state.previous_focused_window = self.niri.get_focused_window_id().await?;
+                let focused = self.niri.get_focused_window_id().await?;
+                state.previous_focused_window = if let Some(focused_id) = focused {
+                    if scratchpad_window_ids.contains(&focused_id) {
+                        None
+                    } else {
+                        Some(focused_id)
+                    }
+                } else {
+                    None
+                };
             }
         } else {
-            state.previous_focused_window = self.niri.get_focused_window_id().await?;
+            let focused = self.niri.get_focused_window_id().await?;
+            state.previous_focused_window = if let Some(focused_id) = focused {
+                if scratchpad_window_ids.contains(&focused_id) {
+                    None
+                } else {
+                    Some(focused_id)
+                }
+            } else {
+                None
+            };
             state.is_visible = true;
         }
 
