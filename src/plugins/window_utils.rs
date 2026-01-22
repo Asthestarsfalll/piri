@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use log::{debug, warn};
-use niri_ipc::{Action, Reply, Request, WorkspaceReferenceArg};
+use niri_ipc::{Action, ColumnDisplay, Reply, Request, WorkspaceReferenceArg};
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::process::{Command, Stdio};
@@ -594,14 +594,19 @@ pub async fn perform_swallow(
             Reply::Err(err) => anyhow::bail!("Failed to focus parent window: {}", err),
         }
 
-        // 2. Ensure child window is not floating (floating windows cannot be swallowed into columns)
+        // 2. Set column display to tabbed (to ensure swallowing into a column works as expected)
+        let _ = socket.send(Request::Action(Action::SetColumnDisplay {
+            display: ColumnDisplay::Tabbed,
+        }))?;
+
+        // 3. Ensure child window is not floating (floating windows cannot be swallowed into columns)
         if child_is_floating {
             let _ = socket.send(Request::Action(Action::MoveWindowToTiling {
                 id: Some(child_window_id),
             }))?;
         }
 
-        // 3. Move child window to parent's workspace if needed
+        // 4. Move child window to parent's workspace if needed
         // To ensure they are neighbors (required for ConsumeOrExpelWindowLeft)
         if let Some(workspace_ref_str) = workspace_ref.as_ref() {
             let workspace_ref_arg = if let Ok(idx) = workspace_ref_str.parse::<u8>() {
@@ -618,12 +623,12 @@ pub async fn perform_swallow(
             }))?;
         }
 
-        // 4. Consume child window into parent's column
+        // 5. Consume child window into parent's column
         let _ = socket.send(Request::Action(Action::ConsumeOrExpelWindowLeft {
             id: Some(child_window_id),
         }))?;
 
-        // 5. Focus child window
+        // 6. Focus child window
         let _ = socket.send(Request::Action(Action::FocusWindow {
             id: child_window_id,
         }))?;

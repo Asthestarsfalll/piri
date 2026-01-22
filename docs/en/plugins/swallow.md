@@ -86,16 +86,6 @@ Each rule supports the following optional parameters:
 
 ### Niri Configuration Requirements
 
-To ensure the Swallow plugin works correctly, you need to configure the following in your niri configuration file:
-
-```kdl
-layout {
-    default-column-display "tabbed"
-}
-```
-
-#### Child Window Handling Recommendations
-
 For a better experience, it is recommended to configure applications that may be replaced by child windows (such as `mpv`, `imv`, `feh`, etc.) using one of the following methods:
 
 > For more detailed information about configuration, please refer to [GitHub Issue #2](https://github.com/Asthestarsfalll/piri/issues/2).
@@ -250,10 +240,11 @@ The plugin uses the same window matching mechanism as other plugins. For details
 
 The plugin performs the following operations when swallowing:
 1. Focus the parent window
-2. Ensures child window is not floating (converts to tiling if needed)
-3. Moves child window to parent's workspace (if different)
-4. Executes `ConsumeOrExpelWindowLeft` action to swallow the child into parent's column
-5. Focuses the child window
+2. Set column display to tabbed (ensures better layout when multiple windows are swallowed)
+3. Ensures child window is not floating (converts to tiling if needed)
+4. Moves child window to parent's workspace (if different)
+5. Executes `ConsumeOrExpelWindowLeft` action to swallow the child into parent's column
+6. Focuses the child window
 
 All operations are performed in a single batch for better performance and atomicity.
 

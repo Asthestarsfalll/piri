@@ -86,16 +86,6 @@ child_app_id = [".*preview.*", ".*markdown.*"]
 
 ### Niri 配置要求
 
-为了确保 Swallow 插件正常工作，需要在 niri 的配置文件中设置以下内容：
-
-```kdl
-layout {
-    default-column-display "tabbed"
-}
-```
-
-#### 子窗口处理建议
-
 为了获得更好的体验，建议对可能被子窗口替换的应用程序（如 `mpv`、`imv`、`feh` 等）进行以下配置之一：
 
 > 请参考 [GitHub Issue #2](https://github.com/Asthestarsfalll/piri/issues/2)。
@@ -250,10 +240,11 @@ child_app_id = ["mpv", "imv", "feh", "sxiv"]
 
 插件在执行吞噬操作时会执行以下步骤：
 1. 聚焦父窗口
-2. 确保子窗口不是浮动窗口（如有需要，转换为平铺窗口）
-3. 将子窗口移动到父窗口的工作空间（如果不同）
-4. 执行 `ConsumeOrExpelWindowLeft` 操作，将子窗口吞噬到父窗口的列中
-5. 聚焦子窗口
+2. 将列显示模式设置为标签式 (tabbed)，确保多窗口吞噬时有更好的布局
+3. 确保子窗口不是浮动窗口（如有需要，转换为平铺窗口）
+4. 将子窗口移动到父窗口的工作空间（如果不同）
+5. 执行 `ConsumeOrExpelWindowLeft` 操作，将子窗口吞噬到父窗口的列中
+6. 聚焦子窗口
 
 所有操作都在一个批处理中执行，以提高性能和原子性。
 
