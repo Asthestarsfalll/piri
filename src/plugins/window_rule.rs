@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Ok, Result};
 use log::{debug, info};
 use niri_ipc::Event;
 use std::collections::HashSet;
@@ -37,7 +37,24 @@ impl FromConfig for WindowRulePluginConfig {
         }
     }
 }
-
+struct ExecuteRules {
+    lose_focus: HashSet<usize>,
+    focus: HashSet<usize>,
+}
+impl ExecuteRules {
+    pub fn clear(&mut self) {
+        self.lose_focus.clear();
+        self.focus.clear();
+    }
+}
+impl Default for ExecuteRules {
+    fn default() -> Self {
+        ExecuteRules {
+            lose_focus: HashSet::new(),
+            focus: HashSet::new(),
+        }
+    }
+}
 /// Window rule plugin that moves windows to workspaces based on app_id and title matching
 pub struct WindowRulePlugin {
     niri: NiriIpc,
@@ -49,7 +66,7 @@ pub struct WindowRulePlugin {
     /// Throttle for focus command execution
     execution_throttle: Throttle,
     /// Set of rule indices that have already executed focus_command (when focus_command_once is true)
-    executed_rules: HashSet<usize>,
+    executed_rules: ExecuteRules,
     /// Last window ID that was processed by handle_focus_command (for throttling)
     last_handled_window: Option<u64>,
     /// Throttle for handle_focus_command
@@ -66,7 +83,7 @@ impl WindowRulePlugin {
         focus_once: bool,
     ) -> Result<()> {
         // If focus_once is true and this rule has already executed focus_command, skip
-        if focus_once && self.executed_rules.contains(&rule_index) {
+        if focus_once && self.executed_rules.focus.contains(&rule_index) {
             return Ok(());
         }
 
@@ -80,7 +97,7 @@ impl WindowRulePlugin {
 
             // Mark this rule as having executed focus_command if focus_once is true
             if focus_once {
-                self.executed_rules.insert(rule_index);
+                self.executed_rules.focus.insert(rule_index);
             }
 
             self.last_focused_window = Some(window_id);
@@ -88,7 +105,34 @@ impl WindowRulePlugin {
 
         Ok(())
     }
+    /// Execute lose focus command with de-duplication
+    async fn execute_lose_focus_rule(
+        &mut self,
+        window_id: u64,
+        lose_focus_command: &str,
+        rule_index: usize,
+        lose_focus_once: bool,
+    ) -> Result<()> {
+        if lose_focus_once && self.executed_rules.lose_focus.contains(&rule_index) {
+            return Ok(());
+        }
+        // Global throttle: prevent executing focus_command too frequently regardless of window ID
+        if self.execution_throttle.check_and_update(Duration::from_millis(200)) {
+            info!(
+                "Executing lose_focus_command for window {}: {}",
+                window_id, lose_focus_command
+            );
+            window_utils::execute_command(lose_focus_command)?;
 
+            // Mark this rule as having executed focus_command if focus_once is true
+            if lose_focus_once {
+                self.executed_rules.lose_focus.insert(rule_index);
+            }
+
+            self.last_focused_window = Some(window_id);
+        }
+        Ok(())
+    }
     /// Handle focus command execution for currently focused window
     async fn handle_focus_command(&mut self, window_id: u64) -> Result<()> {
         // Check if this is a programmatic focus change (e.g., from auto_fill)
@@ -106,18 +150,17 @@ impl WindowRulePlugin {
         }
 
         // Update tracking before processing
-        self.last_handled_window = Some(window_id);
-        
-        
         let windows = self.niri.get_windows().await?;
 
-        let last_window = None;
+        let mut last_window = None;
         // Get the ID of the last handled window
         if let Some(last_window_id) = self.last_handled_window {
             if last_window_id != window_id {
-                last_window = match windows.into_iter().find(|w| w.id == window_id );
+                last_window = windows.clone().into_iter().find(|w| w.id == last_window_id);
             }
         }
+
+        self.last_handled_window = Some(window_id);
 
         let window = match windows.into_iter().find(|w| w.id == window_id) {
             Some(w) => w,
@@ -130,17 +173,21 @@ impl WindowRulePlugin {
 
         let rules = self.config.rules.clone();
         for (rule_index, rule) in rules.iter().enumerate() {
-            if let Some(window) = last_window {
+            if let Some(window) = last_window.clone() {
                 if let Some(ref lose_focus_command) = rule.lose_focus_command {
-                    let matcher = WindowMatcher::new(rule.app_id.clone(),rule.title.clone());
-                    if self.matcher_cache.matches(window.app_id.as_ref(),Some(&window.title),&matcher).await? {
-                           self.execute_lose_focus_rule(
-                                window_id,
-                                focus_command,
-                                rule_index,
-                                rule.focus_command_once,
-                                )
-                                .await?;
+                    let matcher = WindowMatcher::new(rule.app_id.clone(), rule.title.clone());
+                    if self
+                        .matcher_cache
+                        .matches(window.app_id.as_ref(), Some(&window.title), &matcher)
+                        .await?
+                    {
+                        self.execute_lose_focus_rule(
+                            window_id,
+                            lose_focus_command,
+                            rule_index,
+                            rule.focus_command_once,
+                        )
+                        .await?;
                     }
                 }
             }
@@ -231,7 +278,7 @@ impl crate::plugins::Plugin for WindowRulePlugin {
             matcher_cache: Arc::new(WindowMatcherCache::new()),
             last_focused_window: None,
             execution_throttle: Throttle::new(),
-            executed_rules: HashSet::new(),
+            executed_rules: ExecuteRules::default(),
             last_handled_window: None,
             handle_throttle: Throttle::new(),
         }
