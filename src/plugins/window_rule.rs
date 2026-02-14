@@ -107,8 +107,18 @@ impl WindowRulePlugin {
 
         // Update tracking before processing
         self.last_handled_window = Some(window_id);
-
+        
+        
         let windows = self.niri.get_windows().await?;
+
+        let last_window = None;
+        // Get the ID of the last handled window
+        if let Some(last_window_id) = self.last_handled_window {
+            if last_window_id != window_id {
+                last_window = match windows.into_iter().find(|w| w.id == window_id );
+            }
+        }
+
         let window = match windows.into_iter().find(|w| w.id == window_id) {
             Some(w) => w,
             None => {
@@ -120,6 +130,20 @@ impl WindowRulePlugin {
 
         let rules = self.config.rules.clone();
         for (rule_index, rule) in rules.iter().enumerate() {
+            if let Some(window) = last_window {
+                if let Some(ref lose_focus_command) = rule.lose_focus_command {
+                    let matcher = WindowMatcher::new(rule.app_id.clone(),rule.title.clone());
+                    if self.matcher_cache.matches(window.app_id.as_ref(),Some(&window.title),&matcher).await? {
+                           self.execute_lose_focus_rule(
+                                window_id,
+                                focus_command,
+                                rule_index,
+                                rule.focus_command_once,
+                                )
+                                .await?;
+                    }
+                }
+            }
             if let Some(ref focus_command) = rule.focus_command {
                 let matcher = WindowMatcher::new(rule.app_id.clone(), rule.title.clone());
                 if self

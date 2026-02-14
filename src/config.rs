@@ -252,6 +252,11 @@ pub struct WindowRuleConfig {
     /// If true, focus_command will only execute on the first focus (default: false)
     #[serde(default)]
     pub focus_command_once: bool,
+    // Command to execute when a matching window is lose focused (optional)
+    pub lose_focus_command: Option<String>,
+    /// If true, lose_focus_command will only execute on the first focus (default: false)
+    #[serde(default)]
+    pub lose_focus_command_once: bool,
 }
 
 pub(crate) fn deserialize_string_or_vec<'de, D>(
