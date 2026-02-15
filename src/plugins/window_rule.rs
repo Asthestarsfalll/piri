@@ -121,30 +121,8 @@ impl WindowRulePlugin {
     }
     /// Handle focus command execution for currently focused window
     async fn handle_focus_command(&mut self, window_id: u64) -> Result<()> {
-        // Check if this is a programmatic focus change (e.g., from auto_fill)
-        if window_utils::should_ignore_focus_change().await {
-            debug!(
-                "Ignoring programmatic focus change for window {}",
-                window_id
-            );
-            return Ok(());
-        }
-
-        // Global throttle: prevent processing focus changes too frequently
-        if !self.handle_throttle.check_and_update(Duration::from_millis(200)) {
-            return Ok(());
-        }
-
         // Update tracking before processing
         let windows = self.niri.get_windows().await?;
-
-        let mut last_window = None;
-        // Get the ID of the last handled window
-        if let Some(last_window_id) = self.last_handled_window {
-            if last_window_id != window_id {
-                last_window = windows.clone().into_iter().find(|w| w.id == last_window_id);
-            }
-        }
 
         self.last_handled_window = Some(window_id);
         let window = match windows.into_iter().find(|w| w.id == window_id) {
@@ -157,33 +135,6 @@ impl WindowRulePlugin {
         };
 
         let rules = self.config.rules.clone();
-        for (rule_index, rule) in rules.iter().enumerate() {
-            if let Some(last_window) = last_window.clone() {
-                if let Some(ref lose_focus_command) = rule.lose_focus_command {
-                    let matcher = WindowMatcher::new(rule.app_id.clone(), rule.title.clone());
-                    if self
-                        .matcher_cache
-                        .matches(
-                            last_window.app_id.as_ref(),
-                            Some(&last_window.title),
-                            &matcher,
-                        )
-                        .await?
-                    {
-                        self.execute_lose_focus_rule(
-                            last_window.id,
-                            lose_focus_command,
-                            rule_index,
-                            rule.focus_command_once,
-                        )
-                        .await?;
-                        break;
-                    }
-                }
-            } else {
-                break;
-            }
-        }
         for (rule_index, rule) in rules.iter().enumerate() {
             if let Some(ref focus_command) = rule.focus_command {
                 let matcher = WindowMatcher::new(rule.app_id.clone(), rule.title.clone());
@@ -206,7 +157,44 @@ impl WindowRulePlugin {
 
         Ok(())
     }
+    async fn handle_lose_focus_command(&mut self, window_id: u64) -> Result<()> {
+        let windows = self.niri.get_windows().await?;
+        let mut last_window = None;
+        // Get the ID of the last handled window
+        if let Some(last_window_id) = self.last_handled_window {
+            if last_window_id != window_id {
+                last_window = windows.clone().into_iter().find(|w| w.id == last_window_id);
+            }
+        }
+        let rules = self.config.rules.clone();
 
+        if let Some(last_window) = last_window.clone() {
+            for (rule_index, rule) in rules.iter().enumerate() {
+                if let Some(ref lose_focus_command) = rule.lose_focus_command {
+                    let matcher = WindowMatcher::new(rule.app_id.clone(), rule.title.clone());
+                    if self
+                        .matcher_cache
+                        .matches(
+                            last_window.app_id.as_ref(),
+                            Some(&last_window.title),
+                            &matcher,
+                        )
+                        .await?
+                    {
+                        self.execute_lose_focus_rule(
+                            last_window.id,
+                            lose_focus_command,
+                            rule_index,
+                            rule.focus_command_once,
+                        )
+                        .await?;
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
     async fn handle_window_opened(&mut self, window: &niri_ipc::Window) -> Result<()> {
         let rules = self.config.rules.clone();
         for (rule_index, rule) in rules.iter().enumerate() {
@@ -295,10 +283,25 @@ impl crate::plugins::Plugin for WindowRulePlugin {
             Event::WindowFocusChanged {
                 id: Some(window_id),
             } => {
+                // Check if this is a programmatic focus change (e.g., from auto_fill)
+                if window_utils::should_ignore_focus_change().await {
+                    debug!(
+                        "Ignoring programmatic focus change for window {}",
+                        window_id
+                    );
+                    return Ok(());
+                }
+
+                // Global throttle: prevent processing focus changes too frequently
+                if !self.handle_throttle.check_and_update(Duration::from_millis(200)) {
+                    return Ok(());
+                }
                 tokio::time::sleep(Duration::from_millis(10)).await;
+                self.handle_lose_focus_command(*window_id).await?;
                 self.handle_focus_command(*window_id).await?;
             }
             Event::WindowOpenedOrChanged { window } => {
+                self.handle_lose_focus_command(window.id).await?;
                 self.handle_window_opened(window).await?;
             }
             _ => {}
