@@ -1,7 +1,7 @@
 use anyhow::{Ok, Result};
 use log::{debug, info};
 use niri_ipc::Event;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -37,24 +37,12 @@ impl FromConfig for WindowRulePluginConfig {
         }
     }
 }
-struct ExecuteRules {
-    lose_focus: HashSet<usize>,
-    focus: HashSet<usize>,
+#[derive(Hash, PartialEq, Eq)]
+enum EventType {
+    LoseFoucs,
+    Focus,
 }
-impl ExecuteRules {
-    pub fn clear(&mut self) {
-        self.lose_focus.clear();
-        self.focus.clear();
-    }
-}
-impl Default for ExecuteRules {
-    fn default() -> Self {
-        ExecuteRules {
-            lose_focus: HashSet::new(),
-            focus: HashSet::new(),
-        }
-    }
-}
+
 /// Window rule plugin that moves windows to workspaces based on app_id and title matching
 pub struct WindowRulePlugin {
     niri: NiriIpc,
@@ -64,9 +52,9 @@ pub struct WindowRulePlugin {
     /// Last window ID that triggered focus command
     last_focused_window: Option<u64>,
     /// Throttle for focus command execution
-    execution_throttle: Throttle,
+    execution_throttle: HashMap<u64, Throttle>,
     /// Set of rule indices that have already executed focus_command (when focus_command_once is true)
-    executed_rules: ExecuteRules,
+    executed_rules: HashMap<EventType, HashSet<usize>>,
     /// Last window ID that was processed by handle_focus_command (for throttling)
     last_handled_window: Option<u64>,
     /// Throttle for handle_focus_command
@@ -83,12 +71,11 @@ impl WindowRulePlugin {
         focus_once: bool,
     ) -> Result<()> {
         // If focus_once is true and this rule has already executed focus_command, skip
-        if focus_once && self.executed_rules.focus.contains(&rule_index) {
+        if focus_once && self.executed_rules[&EventType::Focus].contains(&rule_index) {
             return Ok(());
         }
-
         // Global throttle: prevent executing focus_command too frequently regardless of window ID
-        if self.execution_throttle.check_and_update(Duration::from_millis(200)) {
+        if self.should_execution(window_id) {
             info!(
                 "Executing focus_command for window {}: {}",
                 window_id, focus_command
@@ -97,7 +84,7 @@ impl WindowRulePlugin {
 
             // Mark this rule as having executed focus_command if focus_once is true
             if focus_once {
-                self.executed_rules.focus.insert(rule_index);
+                self.executed_rules.get_mut(&EventType::Focus).unwrap().insert(rule_index);
             }
 
             self.last_focused_window = Some(window_id);
@@ -113,11 +100,12 @@ impl WindowRulePlugin {
         rule_index: usize,
         lose_focus_once: bool,
     ) -> Result<()> {
-        if lose_focus_once && self.executed_rules.lose_focus.contains(&rule_index) {
+        if lose_focus_once && self.executed_rules[&EventType::LoseFoucs].contains(&rule_index) {
             return Ok(());
         }
         // Global throttle: prevent executing focus_command too frequently regardless of window ID
-        if self.execution_throttle.check_and_update(Duration::from_millis(200)) {
+
+        if self.should_execution(window_id) {
             info!(
                 "Executing lose_focus_command for window {}: {}",
                 window_id, lose_focus_command
@@ -126,10 +114,8 @@ impl WindowRulePlugin {
 
             // Mark this rule as having executed focus_command if focus_once is true
             if lose_focus_once {
-                self.executed_rules.lose_focus.insert(rule_index);
+                self.executed_rules.get_mut(&EventType::LoseFoucs).unwrap().insert(rule_index);
             }
-
-            self.last_focused_window = Some(window_id);
         }
         Ok(())
     }
@@ -161,7 +147,6 @@ impl WindowRulePlugin {
         }
 
         self.last_handled_window = Some(window_id);
-
         let window = match windows.into_iter().find(|w| w.id == window_id) {
             Some(w) => w,
             None => {
@@ -173,24 +158,33 @@ impl WindowRulePlugin {
 
         let rules = self.config.rules.clone();
         for (rule_index, rule) in rules.iter().enumerate() {
-            if let Some(window) = last_window.clone() {
+            if let Some(last_window) = last_window.clone() {
                 if let Some(ref lose_focus_command) = rule.lose_focus_command {
                     let matcher = WindowMatcher::new(rule.app_id.clone(), rule.title.clone());
                     if self
                         .matcher_cache
-                        .matches(window.app_id.as_ref(), Some(&window.title), &matcher)
+                        .matches(
+                            last_window.app_id.as_ref(),
+                            Some(&last_window.title),
+                            &matcher,
+                        )
                         .await?
                     {
                         self.execute_lose_focus_rule(
-                            window_id,
+                            last_window.id,
                             lose_focus_command,
                             rule_index,
                             rule.focus_command_once,
                         )
                         .await?;
+                        break;
                     }
                 }
+            } else {
+                break;
             }
+        }
+        for (rule_index, rule) in rules.iter().enumerate() {
             if let Some(ref focus_command) = rule.focus_command {
                 let matcher = WindowMatcher::new(rule.app_id.clone(), rule.title.clone());
                 if self
@@ -205,7 +199,7 @@ impl WindowRulePlugin {
                         rule.focus_command_once,
                     )
                     .await?;
-                    return Ok(());
+                    break;
                 }
             }
         }
@@ -261,6 +255,18 @@ impl WindowRulePlugin {
         }
         Ok(())
     }
+
+    fn should_execution(&mut self, window_id: u64) -> bool {
+        match self.execution_throttle.get_mut(&window_id) {
+            Some(t) => t.check_and_update(Duration::from_millis(200)),
+            None => {
+                let mut throttle = Throttle::new();
+                throttle.check_and_update(Duration::from_millis(200));
+                self.execution_throttle.insert(window_id, throttle);
+                true
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -277,8 +283,8 @@ impl crate::plugins::Plugin for WindowRulePlugin {
             config,
             matcher_cache: Arc::new(WindowMatcherCache::new()),
             last_focused_window: None,
-            execution_throttle: Throttle::new(),
-            executed_rules: ExecuteRules::default(),
+            execution_throttle: HashMap::default(),
+            executed_rules: HashMap::new(),
             last_handled_window: None,
             handle_throttle: Throttle::new(),
         }
