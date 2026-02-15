@@ -41,7 +41,7 @@ async fn start_config_watcher(
         let _watcher = watcher;
         let mut debouncer = Debounce::new();
 
-        while let Some(_) = rx.recv().await {
+        while rx.recv().await.is_some() {
             let handler = handler.clone();
             let plugin_manager = plugin_manager.clone();
             let niri = niri.clone();
@@ -175,7 +175,7 @@ async fn run_daemon(mut handler: CommandHandler) -> Result<()> {
     // Initialize plugin manager
     let config = handler.config().clone();
     let niri = handler.niri().clone();
-    let mut plugin_manager = PluginManager::new();
+    let mut plugin_manager = PluginManager::default();
     if let Err(e) = plugin_manager.init(niri.clone(), &config).await {
         warn!("Failed to initialize plugins: {}", e);
     }

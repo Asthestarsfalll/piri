@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use log::{debug, info, warn};
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::time::Duration;
 
@@ -399,27 +400,13 @@ impl ScratchpadManager {
             } else {
                 // Already visible but elsewhere, re-record focus and it will be moved in sync_state
                 let focused = self.niri.get_focused_window_id().await?;
-                state.previous_focused_window = if let Some(focused_id) = focused {
-                    if scratchpad_window_ids.contains(&focused_id) {
-                        None
-                    } else {
-                        Some(focused_id)
-                    }
-                } else {
-                    None
-                };
+                state.previous_focused_window =
+                    focused.filter(|&foused_id| scratchpad_window_ids.contains(&foused_id));
             }
         } else {
             let focused = self.niri.get_focused_window_id().await?;
-            state.previous_focused_window = if let Some(focused_id) = focused {
-                if scratchpad_window_ids.contains(&focused_id) {
-                    None
-                } else {
-                    Some(focused_id)
-                }
-            } else {
-                None
-            };
+            state.previous_focused_window =
+                focused.filter(|&focused_id| !scratchpad_window_ids.contains(&focused_id));
             state.is_visible = true;
         }
 

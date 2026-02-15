@@ -13,18 +13,10 @@ use crate::plugins::window_utils::{self, WindowMatcher, WindowMatcherCache};
 use crate::plugins::FromConfig;
 
 /// Singleton plugin config (for internal use)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SingletonPluginConfig {
     /// Map of singleton name to config
     pub singletons: HashMap<String, SingletonConfig>,
-}
-
-impl Default for SingletonPluginConfig {
-    fn default() -> Self {
-        Self {
-            singletons: HashMap::new(),
-        }
-    }
 }
 
 impl FromConfig for SingletonPluginConfig {
@@ -63,7 +55,7 @@ impl SingletonManager {
 
     fn extract_app_id_from_command(command: &str) -> String {
         let cmd = command.split_whitespace().next().unwrap_or(command);
-        cmd.split('/').last().unwrap_or(cmd).to_string()
+        cmd.split('/').next_back().unwrap_or(cmd).to_string()
     }
 
     fn get_window_match_pattern(config: &SingletonConfig) -> String {

@@ -599,11 +599,9 @@ pub async fn perform_swallow(
     let workspace_ref = if let Some(workspace_id) = parent_window.workspace_id {
         if child_window.workspace_id != Some(workspace_id) {
             let workspaces = niri.get_workspaces_for_mapping().await?;
-            if let Some(workspace) = workspaces.iter().find(|ws| ws.id == workspace_id) {
-                Some(workspace.name.as_ref().cloned().unwrap_or_else(|| workspace.idx.to_string()))
-            } else {
-                None
-            }
+            workspaces.iter().find(|ws| ws.id == workspace_id).map(|workspace| {
+                workspace.name.as_ref().cloned().unwrap_or_else(|| workspace.idx.to_string())
+            })
         } else {
             None
         }

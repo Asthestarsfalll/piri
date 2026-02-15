@@ -22,7 +22,7 @@ impl CommandHandler {
         let niri = NiriIpc::new(config.niri.socket_path.clone());
 
         // Create plugin manager (will be initialized in daemon)
-        let plugin_manager = Arc::new(Mutex::new(PluginManager::new()));
+        let plugin_manager = Arc::new(Mutex::new(PluginManager::default()));
 
         Self {
             config,

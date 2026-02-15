@@ -198,7 +198,7 @@ impl WorkspaceRulePlugin {
         let mut columns: HashMap<usize, Vec<&crate::niri::Window>> = HashMap::new();
         for w in &ws_windows {
             if let Some((col, _)) = w.layout.as_ref().and_then(|l| l.pos_in_scrolling_layout) {
-                columns.entry(col).or_insert_with(Vec::new).push(w);
+                columns.entry(col).or_default().push(w);
             }
         }
 

@@ -21,6 +21,7 @@ Piri 是基于 Rust 的 [Niri](https://github.com/YaLTeR/niri) 高性能功能�
 Piri 使用统一的窗口匹配机制，支持通过正则表达式匹配窗口的 `app_id` 和 `title`。多个插件（如 `window_rule`、`singleton`、`scratchpads`）都使用此机制来查找和匹配窗口。
 
 **支持的匹配方式**：
+
 - ✅ **正则表达式匹配**: 支持完整的正则表达式语法
 - ✅ **灵活匹配**: 支持 `app_id` 和/或 `title` 匹配
 - ✅ **OR 逻辑**: 如果同时指定 `app_id` 和 `title`，任一匹配即可
@@ -43,6 +44,7 @@ Piri 使用统一的窗口匹配机制，支持通过正则表达式匹配窗口
 ```
 
 安装脚本会自动：
+
 - 构建 release 版本
 - 安装到 `~/.local/bin/piri`（普通用户）或 `/usr/local/bin/piri`（root）
 - 复制配置文件到 `~/.config/niri/piri.toml`
@@ -104,7 +106,6 @@ piri --debug daemon
 spawn-at-startup "bash" "-c" "/path/to/piri daemon > /dev/null 2>&1 &"
 ```
 
-
 ### Shell 自动补全
 
 生成 shell 自动补全脚本：
@@ -129,6 +130,7 @@ piri completion fish > ~/.config/fish/completions/piri.fish
 快速显示和隐藏常用应用程序的窗口。支持跨 workspace 和 monitor，无论你在哪个工作区或显示器上，都能快速访问你的 scratchpad 窗口。支持**动态添加窗口**、**自动保留手动调整的大小与边距**、**隐藏后自动移动到指定工作区**，以及**将窗口吞入当前聚焦的窗口**（`swallow_to_focus` 选项）。
 
 **配置示例**：
+
 ```toml
 [piri.plugins]
 scratchpads = true
@@ -155,6 +157,7 @@ swallow_to_focus = true  # 显示时自动吞入当前聚焦的窗口
 ```
 
 **快速使用**：
+
 ```bash
 # 切换 scratchpad 显示/隐藏
 piri scratchpads {name} toggle
@@ -168,6 +171,7 @@ piri scratchpads mypad add fromRight --swallow-to-focus  # 启用 swallow 功能
 ```
 
 > **提示**:
+>
 > - 动态添加的窗口仅在第一次注册时使用默认大小和边距。之后你可以手动调整窗口的大小和位置（边距），插件会自动保留这些调整。
 > - 如果 scratchpad 已存在，`add` 命令会自动执行 toggle 操作（显示/隐藏切换）。
 
@@ -180,6 +184,7 @@ piri scratchpads mypad add fromRight --swallow-to-focus  # 启用 swallow 功能
 > **参考**: 此功能类似于 [Hyprland 的 `on-created-empty` workspace rule](https://wiki.hypr.land/Configuring/Workspace-Rules/#rules)。
 
 **配置示例**：
+
 ```toml
 [piri.plugins]
 empty = true
@@ -202,6 +207,7 @@ command = "firefox"
 根据窗口的 `app_id` 或 `title` 使用正则表达式匹配，自动将窗口移动到指定的 workspace，并支持在窗口获得焦点时执行命令。
 
 **配置示例**：
+
 ```toml
 [piri.plugins]
 window_rule = true
@@ -246,6 +252,7 @@ open_on_workspace = "browser"
 ```
 
 **特性**：
+
 - 正则表达式模式匹配支持
 - 根据 `app_id` 或 `title` 匹配，或两者组合（OR 逻辑）
 - 支持模式列表：`app_id` 和 `title` 可以是列表，任意一个匹配即可触发规则
@@ -265,6 +272,7 @@ open_on_workspace = "browser"
 工作区窗口布局管理插件，提供自动宽度调整、自动平铺、自动对齐和自动最大化等功能。整合了原 Autofill 插件的功能，提供更全面的工作区窗口管理能力。
 
 **配置示例**：
+
 ```toml
 [piri.plugins]
 workspace_rule = true
@@ -285,6 +293,7 @@ auto_tile = true  # 自动平铺
 ```
 
 **特性**：
+
 - 自动宽度调整：根据窗口数量自动调整窗口宽度
 - 自动平铺：自动将新窗口合并到现有列中
 - 自动对齐：窗口关闭后自动对齐到最右侧（原 Autofill 功能）
@@ -293,6 +302,7 @@ auto_tile = true  # 自动平铺
 - 灵活配置：支持默认配置和工作区特定配置
 
 **从 Autofill 迁移**：
+
 ```toml
 # 旧配置
 [piri.plugins]
@@ -313,6 +323,7 @@ auto_fill = true  # 启用原 Autofill 功能
 管理单例窗口——只应该有一个实例的窗口。当你切换一个单例时，如果窗口已经存在，它会聚焦该窗口；否则，它会启动应用程序。这对于浏览器、终端或其他通常只需要一个实例运行的工具非常有用。
 
 **配置示例**：
+
 ```toml
 [piri.plugins]
 singleton = true
@@ -331,12 +342,14 @@ on_created_command = "notify-send '编辑器已打开'"
 ```
 
 **快速使用**：
+
 ```bash
 # 切换单例窗口（如果存在则聚焦，不存在则启动）
 piri singleton {name} toggle
 ```
 
 **特性**：
+
 - 智能窗口检测，自动检测现有窗口
 - 自动 App ID 提取，无需手动指定
 - 窗口注册表，快速查找已存在的窗口
@@ -354,6 +367,7 @@ piri singleton {name} toggle
 根据配置的权重值自动重排工作区中的窗口顺序。权重值越大，窗口越靠左。
 
 **配置示例**：
+
 ```toml
 [piri.plugins]
 window_order = true
@@ -370,12 +384,14 @@ ghostty = 70
 ```
 
 **快速使用**：
+
 ```bash
 # 手动触发窗口重排（可在任意工作区执行）
 piri window_order toggle
 ```
 
 **特性**：
+
 - 智能排序算法，最小化窗口移动次数
 - 支持手动触发和事件驱动自动触发
 - 支持工作区过滤（仅自动触发时生效）
@@ -391,6 +407,7 @@ piri window_order toggle
 当子窗口打开时自动隐藏父窗口，让子窗口在布局中替换父窗口的位置。这对于终端启动图片查看器或媒体播放器等场景非常有用。
 
 **配置示例**：
+
 ```toml
 [piri.plugins]
 swallow = true
@@ -413,6 +430,7 @@ child_app_id = [".*preview.*", ".*markdown.*"]
 ```
 
 **特性**：
+
 - 支持基于 PID 的父子进程匹配（默认启用）
 - 支持基于规则的匹配（通过 `app_id`、`title` 或 `pid` 模式）
 - 支持全局和规则级别的排除规则

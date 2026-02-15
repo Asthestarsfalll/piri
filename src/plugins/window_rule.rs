@@ -14,16 +14,10 @@ use crate::plugins::FromConfig;
 use crate::utils::Throttle;
 
 /// Window rule plugin config (for internal use)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WindowRulePluginConfig {
     /// List of window rules
     pub rules: Vec<WindowRuleConfig>,
-}
-
-impl Default for WindowRulePluginConfig {
-    fn default() -> Self {
-        Self { rules: Vec::new() }
-    }
 }
 
 impl FromConfig for WindowRulePluginConfig {

@@ -3,11 +3,13 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::str::FromStr;
 
 use crate::plugins::empty::EmptyPluginConfig;
 
 /// Direction from which the scratchpad appears
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub enum Direction {
     FromTop,
     FromBottom,
@@ -15,9 +17,10 @@ pub enum Direction {
     FromRight,
 }
 
-impl Direction {
+impl std::str::FromStr for Direction {
+    type Err = anyhow::Error;
     /// Convert string to Direction
-    pub fn from_str(s: &str) -> Result<Self> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
             "fromTop" => Ok(Direction::FromTop),
             "fromBottom" => Ok(Direction::FromBottom),
@@ -29,7 +32,9 @@ impl Direction {
             ),
         }
     }
+}
 
+impl Direction {
     /// Convert Direction to string
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -60,7 +65,7 @@ impl<'de> Deserialize<'de> for Direction {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
     pub niri: NiriConfig,
@@ -126,19 +131,13 @@ impl Default for SwallowSection {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct NiriConfig {
     /// Path to niri socket (default: $XDG_RUNTIME_DIR/niri or /tmp/niri)
     pub socket_path: Option<String>,
 }
 
-impl Default for NiriConfig {
-    fn default() -> Self {
-        Self { socket_path: None }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PiriConfig {
     #[serde(default)]
     pub scratchpad: ScratchpadDefaults,
@@ -152,19 +151,7 @@ pub struct PiriConfig {
     pub workspace_rule: WorkspaceRuleSection,
 }
 
-impl Default for PiriConfig {
-    fn default() -> Self {
-        Self {
-            scratchpad: ScratchpadDefaults::default(),
-            plugins: PluginsConfig::default(),
-            window_order: WindowOrderSection::default(),
-            swallow: SwallowSection::default(),
-            workspace_rule: WorkspaceRuleSection::default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PluginsConfig {
     #[serde(default)]
     pub scratchpads: Option<bool>,
@@ -184,22 +171,6 @@ pub struct PluginsConfig {
     pub workspace_rule: Option<bool>,
     #[serde(rename = "empty_config", default)]
     pub empty_config: Option<EmptyPluginConfig>,
-}
-
-impl Default for PluginsConfig {
-    fn default() -> Self {
-        Self {
-            scratchpads: None,
-            empty: None,
-            window_rule: None,
-            autofill: None,
-            singleton: None,
-            window_order: None,
-            swallow: None,
-            workspace_rule: None,
-            empty_config: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -434,7 +405,7 @@ where
 }
 
 /// Workspace rule configuration for a specific workspace
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkspaceRuleConfig {
     /// Auto width configuration: array where index corresponds to window count (1-based)
     /// Each element can be a string (all windows same width) or array (different widths per window)
@@ -455,7 +426,7 @@ pub struct WorkspaceRuleConfig {
 }
 
 /// Workspace rule section in piri config (default settings)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkspaceRuleSection {
     /// Default auto width configuration
     #[serde(deserialize_with = "deserialize_auto_width", default)]
@@ -471,33 +442,6 @@ pub struct WorkspaceRuleSection {
     pub auto_maximize: bool,
 }
 
-impl Default for WorkspaceRuleSection {
-    fn default() -> Self {
-        Self {
-            auto_width: Vec::new(),
-            auto_tile: false,
-            auto_fill: false,
-            auto_maximize: false,
-        }
-    }
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            niri: NiriConfig::default(),
-            piri: PiriConfig::default(),
-            scratchpads: HashMap::new(),
-            empty: HashMap::new(),
-            singleton: HashMap::new(),
-            window_rule: Vec::new(),
-            window_order: HashMap::new(),
-            swallow: Vec::new(),
-            workspace_rule: HashMap::new(),
-        }
-    }
-}
-
 // Helper to convert TOML table to ScratchpadConfig
 impl TryFrom<toml::Table> for ScratchpadConfig {
     type Error = anyhow::Error;
@@ -507,7 +451,7 @@ impl TryFrom<toml::Table> for ScratchpadConfig {
             .get("direction")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'direction' field"))
-            .and_then(|s| Direction::from_str(s))?;
+            .and_then(Direction::from_str)?;
 
         let command = table
             .get("command")

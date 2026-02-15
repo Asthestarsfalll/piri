@@ -142,7 +142,7 @@ register_plugins! {
     "swallow"      => Swallow(swallow::SwallowPlugin),
     "workspace_rule" => WorkspaceRule(workspace_rule::WorkspaceRulePlugin),
 }
-
+#[derive(Default)]
 pub struct PluginManager {
     plugins: Vec<PluginEnum>,
     event_listener_handle: Option<tokio::task::JoinHandle<()>>,
@@ -150,14 +150,6 @@ pub struct PluginManager {
 }
 
 impl PluginManager {
-    pub fn new() -> Self {
-        Self {
-            plugins: Vec::new(),
-            event_listener_handle: None,
-            event_sender: None,
-        }
-    }
-
     pub async fn start_event_listener(
         &mut self,
         niri: NiriIpc,
@@ -264,12 +256,11 @@ impl PluginManager {
                 let new_plugin = create_plugin();
                 self.plugins.push(new_plugin);
             }
-        } else {
-            if self.plugins.iter().any(|p| p.name() == name) {
-                info!("Disabling plugin: {}", name);
-                self.plugins.retain(|p| p.name() != name);
-            }
+        } else if self.plugins.iter().any(|p| p.name() == name) {
+            info!("Disabling plugin: {}", name);
+            self.plugins.retain(|p| p.name() != name);
         }
+
         Ok(())
     }
 

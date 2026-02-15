@@ -12,7 +12,7 @@ use crate::niri::NiriIpc;
 use crate::plugins::FromConfig;
 
 /// Window order plugin config (for internal use)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WindowOrderPluginConfig {
     /// Map of app_id to order weight
     pub window_order: HashMap<String, u32>,
@@ -22,17 +22,6 @@ pub struct WindowOrderPluginConfig {
     pub enable_event_listener: bool,
     /// List of workspaces to apply ordering to (empty = all workspaces)
     pub workspaces: Vec<String>,
-}
-
-impl Default for WindowOrderPluginConfig {
-    fn default() -> Self {
-        Self {
-            window_order: HashMap::new(),
-            default_weight: 0,
-            enable_event_listener: false,
-            workspaces: Vec::new(),
-        }
-    }
 }
 
 impl FromConfig for WindowOrderPluginConfig {
@@ -324,7 +313,8 @@ impl WindowOrderPlugin {
                 }
 
                 // Calculate move distance for this window
-                let move_distance = (current_col as i32 - target_col as i32).abs() as usize;
+                let move_distance =
+                    (current_col as i32 - target_col as i32).unsigned_abs() as usize;
 
                 // Simulate this move and count how many windows would be in correct position
                 let mut test_state = current_state.clone();

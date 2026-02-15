@@ -247,9 +247,9 @@ pub async fn handle_request(
                     // Check if singleton plugin should be enabled but isn't
                     let config = handler.config();
                     if config.piri.plugins.is_enabled("singleton") {
-                        IpcResponse::Error(format!("Singleton plugin is enabled but not initialized. Please restart the daemon."))
+                        IpcResponse::Error("Singleton plugin is enabled but not initialized. Please restart the daemon.".to_owned())
                     } else {
-                        IpcResponse::Error(format!("Singleton plugin is not enabled. Please enable it in the configuration file (piri.plugins.singleton = true)."))
+                        IpcResponse::Error("Singleton plugin is not enabled. Please enable it in the configuration file (piri.plugins.singleton = true).".to_owned())
                     }
                 }
                 IpcRequest::WindowOrderToggle => {
