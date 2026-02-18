@@ -329,7 +329,10 @@ impl ScratchpadManager {
 
         info!("Finding or launching window for scratchpad {}", name);
         let config = state.config.clone();
-        let matcher = WindowMatcher::new(Some(vec![config.app_id.clone()]), None);
+        let matcher = WindowMatcher::new(
+            Some(vec![config.app_id.clone()]),
+            Some(vec![config.title.to_owned()]),
+        );
 
         let window_id = if let Some(window) =
             window_utils::find_window_by_matcher(self.niri.clone(), &matcher, &self.matcher_cache)
@@ -427,7 +430,7 @@ impl ScratchpadManager {
             .app_id
             .clone()
             .ok_or_else(|| anyhow::anyhow!("No app_id for current window"))?;
-
+        let title = window.title;
         // Check if scratchpad already exists
         if let Some(state) = self.states.get(name) {
             if let Some(wid) = state.window_id {
@@ -446,6 +449,7 @@ impl ScratchpadManager {
             direction,
             command: format!("# Window {} added dynamically", window.id),
             app_id,
+            title,
             size: default_size.to_string(),
             margin: default_margin,
             swallow_to_focus,

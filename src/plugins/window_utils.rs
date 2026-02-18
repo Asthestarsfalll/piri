@@ -45,7 +45,8 @@ pub async fn should_ignore_focus_change() -> bool {
 /// Execute a shell command (generic function for all plugins)
 /// This function spawns a command in the background without waiting for completion
 pub fn execute_command(command: &str) -> Result<()> {
-    Command::new("sh")
+    let cmd_clone = command.to_owned();
+    let mut child = Command::new("sh")
         .arg("-c")
         .arg(command)
         .stdin(Stdio::null())
@@ -53,6 +54,25 @@ pub fn execute_command(command: &str) -> Result<()> {
         .stderr(Stdio::null())
         .spawn()
         .with_context(|| format!("Failed to execute command: {}", command))?;
+    tokio::spawn(async move {
+        // 等待子进程完成，捕获结果但不阻塞主线程
+        match child.wait() {
+            Ok(status) => {
+                // 可选：记录日志（如果命令失败，仅打日志不影响主线程）
+                if !status.success() {
+                    let code_msg = match status.code() {
+                        Some(code) => format!("exit code {}", code),
+                        None => "terminated by signal".to_string(),
+                    };
+                    eprintln!("Command '{}' finished with error: {}", cmd_clone, code_msg);
+                }
+            }
+            Err(e) => {
+                // 仅打日志，不触发panic
+                eprintln!("Failed to wait for command '{}': {}", cmd_clone, e);
+            }
+        }
+    });
     Ok(())
 }
 

@@ -281,6 +281,8 @@ pub struct ScratchpadConfig {
     pub command: String,
     /// Explicit app_id to match windows (required)
     pub app_id: String,
+    /// Explicit title to match windows
+    pub title: String,
     /// Size of the scratchpad (e.g., "75% 60%")
     pub size: String,
     /// Margin from the edge in pixels
@@ -475,7 +477,11 @@ impl TryFrom<toml::Table> for ScratchpadConfig {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'app_id' field"))?
             .to_string();
-
+        let title = table
+            .get("title")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing 'title' field"))?
+            .to_string();
         let swallow_to_focus =
             table.get("swallow_to_focus").and_then(|v| v.as_bool()).unwrap_or(false);
 
@@ -483,6 +489,7 @@ impl TryFrom<toml::Table> for ScratchpadConfig {
             direction,
             command,
             app_id,
+            title,
             size,
             margin,
             swallow_to_focus,

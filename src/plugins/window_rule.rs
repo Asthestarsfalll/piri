@@ -239,15 +239,10 @@ impl WindowRulePlugin {
     }
 
     fn should_execution(&mut self, window_id: u64) -> bool {
-        match self.execution_throttle.get_mut(&window_id) {
-            Some(t) => t.check_and_update(Duration::from_millis(200)),
-            None => {
-                let mut throttle = Throttle::new();
-                throttle.check_and_update(Duration::from_millis(200));
-                self.execution_throttle.insert(window_id, throttle);
-                true
-            }
-        }
+        self.execution_throttle
+            .entry(window_id)
+            .or_default()
+            .check_and_update(Duration::from_millis(100))
     }
 }
 
@@ -287,7 +282,7 @@ impl crate::plugins::Plugin for WindowRulePlugin {
                 }
 
                 // Global throttle: prevent processing focus changes too frequently
-                if !self.handle_throttle.check_and_update(Duration::from_millis(200)) {
+                if !self.handle_throttle.check_and_update(Duration::from_millis(100)) {
                     return Ok(());
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -296,6 +291,7 @@ impl crate::plugins::Plugin for WindowRulePlugin {
             }
             Event::WindowOpenedOrChanged { window } => {
                 self.handle_lose_focus_command(window.id).await?;
+                self.handle_focus_command(window.id).await?;
                 self.handle_window_opened(window).await?;
             }
             _ => {}
