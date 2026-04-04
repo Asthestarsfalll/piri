@@ -218,56 +218,71 @@ impl ScratchpadManager {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
-        // Get current position and size
-        let (current_x, current_y, current_width, current_height) = self
-            .niri
-            .get_window_position_async(window_id)
-            .await?
-            .context("Failed to get window position")?;
+        if is_dynamic {
+            // For dynamic scratchpads, we need current size first to compute target position.
+            // Read position before any resize (dynamic scratchpads are not resized).
+            let (current_x, current_y, current_width, current_height) = self
+                .niri
+                .get_window_position_async(window_id)
+                .await?
+                .context("Failed to get window position")?;
 
-        // For dynamic scratchpads, update margin from current position before hiding
-        if is_dynamic && !is_visible {
-            let (output_width, output_height) = self.niri.get_output_size().await?;
-            let new_margin = window_utils::extract_margin(
-                config.direction,
-                output_width,
-                output_height,
-                current_width,
-                current_height,
-                current_x,
-                current_y,
-            );
-            debug!(
-                "Updating dynamic scratchpad '{}' margin to {}",
-                name, new_margin
-            );
-            config.margin = new_margin;
-            // Update state with new margin
-            if let Some(state) = self.states.get_mut(name) {
-                state.config.margin = new_margin;
+            // Update margin from current position before hiding
+            if !is_visible {
+                let (output_width, output_height) = self.niri.get_output_size().await?;
+                let new_margin = window_utils::extract_margin(
+                    config.direction,
+                    output_width,
+                    output_height,
+                    current_width,
+                    current_height,
+                    current_x,
+                    current_y,
+                );
+                debug!(
+                    "Updating dynamic scratchpad '{}' margin to {}",
+                    name, new_margin
+                );
+                config.margin = new_margin;
+                if let Some(state) = self.states.get_mut(name) {
+                    state.config.margin = new_margin;
+                }
             }
-        }
 
-        let (target_x, target_y, target_width, target_height) = if is_dynamic {
-            // For dynamic scratchpads, use current size to calculate target position
-            let (tx, ty) = self
+            let (target_x, target_y) = self
                 .get_target_position(&config, current_width, current_height, is_visible)
                 .await?;
-            (tx, ty, current_width, current_height)
+
+            window_utils::move_window_to_position(
+                &self.niri, window_id, current_x, current_y, target_x, target_y,
+            )
+            .await?;
         } else {
-            // For configured scratchpads, use config size
-            self.get_target_geometry(&config, is_visible).await?
+            // For configured scratchpads, compute target geometry from config
+            let (target_x, target_y, target_width, target_height) =
+                self.get_target_geometry(&config, is_visible).await?;
+
+            // Resize BEFORE reading position so the subsequent position read
+            // reflects any adjustment niri makes during the resize.
+            if is_visible {
+                self.niri
+                    .resize_floating_window(window_id, target_width, target_height)
+                    .await?;
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+
+            // Now read the actual current position (post-resize)
+            let (current_x, current_y, _, _) = self
+                .niri
+                .get_window_position_async(window_id)
+                .await?
+                .context("Failed to get window position")?;
+
+            window_utils::move_window_to_position(
+                &self.niri, window_id, current_x, current_y, target_x, target_y,
+            )
+            .await?;
         };
-
-        // Only resize for non-dynamic scratchpads when showing
-        if is_visible && !is_dynamic {
-            self.niri.resize_floating_window(window_id, target_width, target_height).await?;
-        }
-
-        window_utils::move_window_to_position(
-            &self.niri, window_id, current_x, current_y, target_x, target_y,
-        )
-        .await?;
 
         if is_visible {
             window_utils::focus_window(self.niri.clone(), window_id).await?;
