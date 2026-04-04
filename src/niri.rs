@@ -473,6 +473,48 @@ impl NiriIpc {
         .await
     }
 
+    /// Toggle fullscreen on a window
+    pub async fn fullscreen_window(&self, window_id: u64) -> Result<()> {
+        self.send_action(Action::FullscreenWindow {
+            id: Some(window_id),
+        })
+        .await
+    }
+
+    /// Expel the focused window from its column (creates a new column)
+    pub async fn expel_window_from_column(&self) -> Result<()> {
+        self.send_action(Action::ExpelWindowFromColumn {}).await
+    }
+
+    /// Move the focused column to a specific index (1-based)
+    pub async fn move_column_to_index(&self, index: usize) -> Result<()> {
+        self.send_action(Action::MoveColumnToIndex { index }).await
+    }
+
+    /// Move the focused window up within its column
+    pub async fn move_window_up(&self) -> Result<()> {
+        self.send_action(Action::MoveWindowUp {}).await
+    }
+
+    /// Move the focused window down within its column
+    pub async fn move_window_down(&self) -> Result<()> {
+        self.send_action(Action::MoveWindowDown {}).await
+    }
+
+    /// Consume or expel window to the left
+    #[allow(dead_code)]
+    pub async fn consume_or_expel_window_left(&self, window_id: Option<u64>) -> Result<()> {
+        self.send_action(Action::ConsumeOrExpelWindowLeft { id: window_id })
+            .await
+    }
+
+    /// Consume or expel window to the right
+    #[allow(dead_code)]
+    pub async fn consume_or_expel_window_right(&self, window_id: Option<u64>) -> Result<()> {
+        self.send_action(Action::ConsumeOrExpelWindowRight { id: window_id })
+            .await
+    }
+
     /// Get output dimensions (width and height) for focused output
     pub async fn get_output_size(&self) -> Result<(u32, u32)> {
         let output = self.get_focused_output().await?;

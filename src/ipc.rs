@@ -19,6 +19,7 @@ pub enum IpcRequest {
         name: String,
     },
     WindowOrderToggle,
+    FullscreenToggle,
     Ping,
     Shutdown,
 }
@@ -260,6 +261,9 @@ pub async fn handle_request(
                     } else {
                         IpcResponse::Error("WindowOrder plugin is not enabled. Please enable it in the configuration file (piri.plugins.window_order = true).".to_string())
                     }
+                }
+                IpcRequest::FullscreenToggle => {
+                    IpcResponse::Error("Fullscreen plugin is not initialized. Please restart the daemon.".to_string())
                 }
             }
         }

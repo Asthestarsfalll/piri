@@ -182,6 +182,8 @@ pub struct PluginsConfig {
     pub swallow: Option<bool>,
     #[serde(default)]
     pub workspace_rule: Option<bool>,
+    #[serde(default)]
+    pub fullscreen: Option<bool>,
     #[serde(rename = "empty_config", default)]
     pub empty_config: Option<EmptyPluginConfig>,
 }
@@ -197,6 +199,7 @@ impl Default for PluginsConfig {
             window_order: None,
             swallow: None,
             workspace_rule: None,
+            fullscreen: None,
             empty_config: None,
         }
     }
@@ -379,6 +382,7 @@ impl PluginsConfig {
             "window_order" => self.window_order.unwrap_or(false),
             "swallow" => self.swallow.unwrap_or(false),
             "workspace_rule" => self.workspace_rule.unwrap_or(false),
+            "fullscreen" => self.fullscreen.unwrap_or(false),
             _ => false,
         }
     }

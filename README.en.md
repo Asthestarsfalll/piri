@@ -15,6 +15,7 @@ Piri is a high-performance [Niri](https://github.com/YaLTeR/niri) extension tool
 - 🔒 **Singleton**: Single-instance assurance. Ensures specific applications remain globally unique, supporting quick focus or automatic process launching (see [Singleton Docs](docs/en/plugins/singleton.md))
 - 📋 **Window Order**: Intelligent reordering. Automatically reorders tiled windows based on configured weights, preserving relative positions for identical weights to minimize movement (see [Window Order Docs](docs/en/plugins/window_order.md))
 - 🍽️ **Swallow**: Window swallowing mechanism. Automatically hides parent windows when child windows are opened, allowing child windows to replace parent windows in the layout (see [Swallow Docs](docs/en/plugins/swallow.md))
+- 🖥️ **Fullscreen**: Fullscreen with position restore. Toggles fullscreen while saving and restoring the window's exact position in the scrolling layout, including shared columns (see [Fullscreen Docs](docs/en/plugins/fullscreen.md))
 
 
 ## Quick Start
@@ -402,6 +403,37 @@ child_app_id = [".*preview.*", ".*markdown.*"]
 - Smart floating window handling: Floating windows are not swallowed, but re-attempts swallowing when converting from floating to tiled
 
 For detailed documentation, please refer to the [Swallow documentation](docs/en/plugins/swallow.md).
+
+### Fullscreen
+
+Toggle fullscreen while saving and restoring the window's exact position in the scrolling layout. Niri's built-in fullscreen does not remember where a window was — this plugin does, including windows that share a column with other windows.
+
+**Configuration Example**:
+```toml
+[piri.plugins]
+fullscreen = true
+```
+
+**Quick Usage**:
+```bash
+# Toggle fullscreen with position restore
+piri fullscreen-toggle
+```
+
+**Niri Keybinding**:
+```kdl
+binds {
+    Mod+F { spawn "piri" "fullscreen-toggle"; }
+}
+```
+
+**Features**:
+- Saves and restores column index and row position
+- Handles shared columns intelligently (expel, move, consume back)
+- Floating windows are fullscreened normally without position tracking
+- Falls back to plain fullscreen if position data is unavailable
+
+For detailed documentation, please refer to the [Fullscreen documentation](docs/en/plugins/fullscreen.md).
 
 ## Documentation
 
