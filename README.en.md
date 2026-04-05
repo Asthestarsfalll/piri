@@ -16,6 +16,7 @@ Piri is a high-performance [Niri](https://github.com/YaLTeR/niri) extension tool
 - 📋 **Window Order**: Intelligent reordering. Automatically reorders tiled windows based on configured weights, preserving relative positions for identical weights to minimize movement (see [Window Order Docs](docs/en/plugins/window_order.md))
 - 🍽️ **Swallow**: Window swallowing mechanism. Automatically hides parent windows when child windows are opened, allowing child windows to replace parent windows in the layout (see [Swallow Docs](docs/en/plugins/swallow.md))
 - 🖥️ **Fullscreen**: Fullscreen with position restore. Toggles fullscreen while saving and restoring the window's exact position in the scrolling layout, including shared columns (see [Fullscreen Docs](docs/en/plugins/fullscreen.md))
+- 🔄 **Refocus**: Close and refocus. Closes the focused window and restores focus to the previously focused window on the same workspace, instead of the geometrically adjacent one (see [Refocus Docs](docs/en/plugins/refocus.md))
 
 
 ## Quick Start
@@ -434,6 +435,37 @@ binds {
 - Falls back to plain fullscreen if position data is unavailable
 
 For detailed documentation, please refer to the [Fullscreen documentation](docs/en/plugins/fullscreen.md).
+
+### Refocus
+
+Close the focused window and restore focus to the previously focused window on the same workspace. Solves the common issue where Niri focuses the geometrically adjacent window instead of the one you were working on.
+
+**Configuration Example**:
+```toml
+[piri.plugins]
+refocus = true
+```
+
+**Quick Usage**:
+```bash
+# Close focused window and refocus the previous one
+piri close-refocus
+```
+
+**Niri Keybinding**:
+```kdl
+binds {
+    Mod+Q { spawn "piri" "close-refocus"; }
+}
+```
+
+**Features**:
+- Maintains a focus history (depth 50) across all workspaces
+- Only refocuses windows on the same workspace
+- Chainable: A → B → C, close C → B, close B → A
+- Falls back to Niri's default behavior when no history target is available
+
+For detailed documentation, please refer to the [Refocus documentation](docs/en/plugins/refocus.md).
 
 ## Documentation
 

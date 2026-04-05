@@ -184,6 +184,8 @@ pub struct PluginsConfig {
     pub workspace_rule: Option<bool>,
     #[serde(default)]
     pub fullscreen: Option<bool>,
+    #[serde(default)]
+    pub refocus: Option<bool>,
     #[serde(rename = "empty_config", default)]
     pub empty_config: Option<EmptyPluginConfig>,
 }
@@ -200,6 +202,7 @@ impl Default for PluginsConfig {
             swallow: None,
             workspace_rule: None,
             fullscreen: None,
+            refocus: None,
             empty_config: None,
         }
     }
@@ -383,6 +386,7 @@ impl PluginsConfig {
             "swallow" => self.swallow.unwrap_or(false),
             "workspace_rule" => self.workspace_rule.unwrap_or(false),
             "fullscreen" => self.fullscreen.unwrap_or(false),
+            "refocus" => self.refocus.unwrap_or(false),
             _ => false,
         }
     }

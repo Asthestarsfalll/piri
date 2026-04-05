@@ -265,9 +265,7 @@ impl ScratchpadManager {
             // Resize BEFORE reading position so the subsequent position read
             // reflects any adjustment niri makes during the resize.
             if is_visible {
-                self.niri
-                    .resize_floating_window(window_id, target_width, target_height)
-                    .await?;
+                self.niri.resize_floating_window(window_id, target_width, target_height).await?;
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
 

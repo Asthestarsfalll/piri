@@ -100,8 +100,13 @@ impl FullscreenState {
         self.positions.clear();
         for window in windows {
             if let Some(pos) = window.layout.pos_in_scrolling_layout {
-                self.positions
-                    .insert(window.id, LayoutPos { col: pos.0, row: pos.1 });
+                self.positions.insert(
+                    window.id,
+                    LayoutPos {
+                        col: pos.0,
+                        row: pos.1,
+                    },
+                );
             }
         }
         debug!(
@@ -310,9 +315,8 @@ impl FullscreenPlugin {
                     saved,
                     shared_column,
                 } => {
-                    if let Err(e) = self
-                        .execute_restore(window_id, current, saved, shared_column)
-                        .await
+                    if let Err(e) =
+                        self.execute_restore(window_id, current, saved, shared_column).await
                     {
                         warn!("Failed to restore position for window {}: {}", window_id, e);
                     }
@@ -496,10 +500,7 @@ mod tests {
     #[test]
     fn windows_changed_skips_floating() {
         let mut state = FullscreenState::new();
-        let windows = vec![
-            make_niri_window(10, 1, 1),
-            make_floating_window(20),
-        ];
+        let windows = vec![make_niri_window(10, 1, 1), make_floating_window(20)];
 
         state.handle_windows_changed(&windows);
 
@@ -644,13 +645,16 @@ mod tests {
     #[test]
     fn layouts_changed_skips_floating() {
         let mut state = FullscreenState::new();
-        let changes = vec![(1, WindowLayout {
-            pos_in_scrolling_layout: None,
-            tile_size: (0.0, 0.0),
-            window_size: (0, 0),
-            tile_pos_in_workspace_view: None,
-            window_offset_in_tile: (0.0, 0.0),
-        })];
+        let changes = vec![(
+            1,
+            WindowLayout {
+                pos_in_scrolling_layout: None,
+                tile_size: (0.0, 0.0),
+                window_size: (0, 0),
+                tile_pos_in_workspace_view: None,
+                window_offset_in_tile: (0.0, 0.0),
+            },
+        )];
 
         let actions = state.process_layouts_changed(&changes);
         assert!(actions.is_empty());
@@ -792,16 +796,14 @@ mod tests {
             state: FullscreenState::new(),
         };
 
-        assert!(plugin.is_interested_in_event(&Event::WindowsChanged {
-            windows: vec![]
-        }));
-        assert!(plugin.is_interested_in_event(&Event::WindowOpenedOrChanged {
-            window: make_niri_window(1, 1, 1)
-        }));
+        assert!(plugin.is_interested_in_event(&Event::WindowsChanged { windows: vec![] }));
+        assert!(
+            plugin.is_interested_in_event(&Event::WindowOpenedOrChanged {
+                window: make_niri_window(1, 1, 1)
+            })
+        );
         assert!(plugin.is_interested_in_event(&Event::WindowClosed { id: 1 }));
-        assert!(plugin.is_interested_in_event(&Event::WindowLayoutsChanged {
-            changes: vec![]
-        }));
+        assert!(plugin.is_interested_in_event(&Event::WindowLayoutsChanged { changes: vec![] }));
     }
 
     #[test]

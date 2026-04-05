@@ -62,6 +62,8 @@ enum Commands {
     },
     /// Toggle fullscreen with position restore
     FullscreenToggle,
+    /// Close focused window and refocus the previously focused one
+    CloseRefocus,
     /// Stop the daemon
     Stop,
     /// Generate shell completion script
@@ -233,6 +235,14 @@ async fn async_main() -> Result<()> {
                 client.send_request(IpcRequest::FullscreenToggle).await,
                 "Fullscreen toggled",
                 "Failed to toggle fullscreen",
+            )?;
+        }
+        Commands::CloseRefocus => {
+            let client = IpcClient::new(None);
+            handle_ipc_response(
+                client.send_request(IpcRequest::CloseRefocus).await,
+                "Window closed and refocused",
+                "Failed to close and refocus",
             )?;
         }
         Commands::Stop => {

@@ -481,6 +481,14 @@ impl NiriIpc {
         .await
     }
 
+    /// Close a window by ID
+    pub async fn close_window(&self, window_id: u64) -> Result<()> {
+        self.send_action(Action::CloseWindow {
+            id: Some(window_id),
+        })
+        .await
+    }
+
     /// Expel the focused window from its column (creates a new column)
     pub async fn expel_window_from_column(&self) -> Result<()> {
         self.send_action(Action::ExpelWindowFromColumn {}).await
@@ -504,15 +512,13 @@ impl NiriIpc {
     /// Consume or expel window to the left
     #[allow(dead_code)]
     pub async fn consume_or_expel_window_left(&self, window_id: Option<u64>) -> Result<()> {
-        self.send_action(Action::ConsumeOrExpelWindowLeft { id: window_id })
-            .await
+        self.send_action(Action::ConsumeOrExpelWindowLeft { id: window_id }).await
     }
 
     /// Consume or expel window to the right
     #[allow(dead_code)]
     pub async fn consume_or_expel_window_right(&self, window_id: Option<u64>) -> Result<()> {
-        self.send_action(Action::ConsumeOrExpelWindowRight { id: window_id })
-            .await
+        self.send_action(Action::ConsumeOrExpelWindowRight { id: window_id }).await
     }
 
     /// Get output dimensions (width and height) for focused output

@@ -20,6 +20,7 @@ pub enum IpcRequest {
     },
     WindowOrderToggle,
     FullscreenToggle,
+    CloseRefocus,
     Ping,
     Shutdown,
 }
@@ -262,8 +263,16 @@ pub async fn handle_request(
                         IpcResponse::Error("WindowOrder plugin is not enabled. Please enable it in the configuration file (piri.plugins.window_order = true).".to_string())
                     }
                 }
-                IpcRequest::FullscreenToggle => {
-                    IpcResponse::Error("Fullscreen plugin is not initialized. Please restart the daemon.".to_string())
+                IpcRequest::FullscreenToggle => IpcResponse::Error(
+                    "Fullscreen plugin is not initialized. Please restart the daemon.".to_string(),
+                ),
+                IpcRequest::CloseRefocus => {
+                    let config = handler.config();
+                    if config.piri.plugins.is_enabled("refocus") {
+                        IpcResponse::Error("Refocus plugin is enabled but not initialized. Please restart the daemon.".to_string())
+                    } else {
+                        IpcResponse::Error("Refocus plugin is not enabled. Please enable it in the configuration file (piri.plugins.refocus = true).".to_string())
+                    }
                 }
             }
         }

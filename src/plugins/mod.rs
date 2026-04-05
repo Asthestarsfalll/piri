@@ -1,5 +1,6 @@
 pub mod empty;
 pub mod fullscreen;
+pub mod refocus;
 pub mod scratchpads;
 pub mod singleton;
 pub mod swallow;
@@ -143,6 +144,7 @@ register_plugins! {
     "window_order" => WindowOrder(window_order::WindowOrderPlugin),
     "swallow"      => Swallow(swallow::SwallowPlugin),
     "workspace_rule" => WorkspaceRule(workspace_rule::WorkspaceRulePlugin),
+    "refocus"        => Refocus(refocus::RefocusPlugin),
 }
 
 pub struct PluginManager {
