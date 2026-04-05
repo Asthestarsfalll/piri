@@ -1,4 +1,5 @@
 pub mod empty;
+pub mod fullscreen;
 pub mod scratchpads;
 pub mod singleton;
 pub mod swallow;
@@ -135,6 +136,7 @@ macro_rules! register_plugins {
 
 register_plugins! {
     "empty"        => Empty(empty::EmptyPlugin),
+    "fullscreen"   => Fullscreen(fullscreen::FullscreenPlugin),
     "window_rule"  => WindowRule(window_rule::WindowRulePlugin),
     "scratchpads"  => Scratchpads(scratchpads::ScratchpadsPlugin),
     "singleton"    => Singleton(singleton::SingletonPlugin),

@@ -60,6 +60,8 @@ enum Commands {
         #[command(subcommand)]
         action: WindowOrderAction,
     },
+    /// Toggle fullscreen with position restore
+    FullscreenToggle,
     /// Stop the daemon
     Stop,
     /// Generate shell completion script
@@ -224,6 +226,14 @@ async fn async_main() -> Result<()> {
                     )?;
                 }
             }
+        }
+        Commands::FullscreenToggle => {
+            let client = IpcClient::new(None);
+            handle_ipc_response(
+                client.send_request(IpcRequest::FullscreenToggle).await,
+                "Fullscreen toggled",
+                "Failed to toggle fullscreen",
+            )?;
         }
         Commands::Stop => {
             let client = IpcClient::new(None);
