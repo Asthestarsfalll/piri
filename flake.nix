@@ -70,6 +70,7 @@
                 partOf = [ "graphical-session.target" ];
                 wants = [ "graphical-session.target" ];
                 after = [ "graphical-session.target" ];
+                enableDefaultPath = false;
                 serviceConfig = {
                   Type = "simple";
                   Restart = "on-failure";
