@@ -175,14 +175,14 @@ ghostty = 70
 use_pid_matching=false
 
 [piri.swallow.exclude]
-app_id = ".*mpv*."
+app_id = ".*mpv.*"
 
 [[swallow]]
 child_app_id='.*google-chrome.*'
 parent_app_id='.*ghostty.*'
 
 [[swallow]]
-child_app_id='.*firefox*.'
+child_app_id='.*firefox.*'
 parent_app_id='.*ghostty.*'
 
 # Workspace rule: automatically adjust window widths based on window count

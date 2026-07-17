@@ -431,7 +431,7 @@ pub struct WorkspaceRuleConfig {
     /// Examples:
     ///   ["100%", "50%"] - 1 window: 100%, 2 windows: each 50%
     ///   ["100%", ["45%", "55%"]] - 1 window: 100%, 2 windows: 45% and 55%
-    #[serde(deserialize_with = "deserialize_auto_width")]
+    #[serde(deserialize_with = "deserialize_auto_width", default)]
     pub auto_width: Vec<Vec<String>>,
     /// If true, automatically tile windows: allow up to 2 windows per column (except first column)
     #[serde(default)]
@@ -643,5 +643,751 @@ impl TryFrom<toml::Table> for ScratchpadConfig {
             auto_hide_on_focus_loss,
             refocus,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== Direction ====================
+
+    #[test]
+    fn test_direction_parse_valid() {
+        assert_eq!("fromTop".parse::<Direction>().unwrap(), Direction::Top);
+        assert_eq!(
+            "fromBottom".parse::<Direction>().unwrap(),
+            Direction::Bottom
+        );
+        assert_eq!("fromLeft".parse::<Direction>().unwrap(), Direction::Left);
+        assert_eq!("fromRight".parse::<Direction>().unwrap(), Direction::Right);
+    }
+
+    #[test]
+    fn test_direction_parse_invalid() {
+        assert!("up".parse::<Direction>().is_err());
+        assert!("".parse::<Direction>().is_err());
+    }
+
+    #[test]
+    fn test_direction_as_str() {
+        assert_eq!(Direction::Top.as_str(), "fromTop");
+        assert_eq!(Direction::Bottom.as_str(), "fromBottom");
+        assert_eq!(Direction::Left.as_str(), "fromLeft");
+        assert_eq!(Direction::Right.as_str(), "fromRight");
+    }
+
+    #[test]
+    fn test_direction_roundtrip() {
+        for dir in [
+            Direction::Top,
+            Direction::Bottom,
+            Direction::Left,
+            Direction::Right,
+        ] {
+            let s = dir.as_str();
+            let parsed: Direction = s.parse().unwrap();
+            assert_eq!(parsed, dir);
+        }
+    }
+
+    // ==================== NiriConfig ====================
+
+    #[test]
+    fn test_niri_config_default() {
+        let config: NiriConfig = toml::from_str("").unwrap();
+        assert!(config.socket_path.is_none());
+    }
+
+    #[test]
+    fn test_niri_config_with_socket() {
+        let toml = r#"socket_path = "/tmp/niri""#;
+        let config: NiriConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.socket_path.as_deref(), Some("/tmp/niri"));
+    }
+
+    // ==================== PluginsConfig ====================
+
+    #[test]
+    fn test_plugins_config_default() {
+        let config: PluginsConfig = toml::from_str("").unwrap();
+        assert_eq!(config.is_enabled("scratchpads"), false);
+        assert_eq!(config.is_enabled("empty"), false);
+        assert_eq!(config.is_enabled("window_rule"), false);
+        assert_eq!(config.is_enabled("singleton"), false);
+        assert_eq!(config.is_enabled("window_order"), false);
+        assert_eq!(config.is_enabled("swallow"), false);
+        assert_eq!(config.is_enabled("workspace_rule"), false);
+        assert_eq!(config.is_enabled("mark"), false);
+        assert_eq!(config.is_enabled("sticky"), false);
+        assert_eq!(config.is_enabled("unknown_plugin"), false);
+    }
+
+    #[test]
+    fn test_plugins_config_all_enabled() {
+        let toml = r#"
+scratchpads = true
+empty = true
+window_rule = true
+singleton = true
+window_order = true
+swallow = true
+workspace_rule = true
+mark = true
+sticky = true
+"#;
+        let config: PluginsConfig = toml::from_str(toml).unwrap();
+        assert!(config.is_enabled("scratchpads"));
+        assert!(config.is_enabled("empty"));
+        assert!(config.is_enabled("window_rule"));
+        assert!(config.is_enabled("singleton"));
+        assert!(config.is_enabled("window_order"));
+        assert!(config.is_enabled("swallow"));
+        assert!(config.is_enabled("workspace_rule"));
+        assert!(config.is_enabled("mark"));
+        assert!(config.is_enabled("sticky"));
+    }
+
+    // ==================== ScratchpadDefaults ====================
+
+    #[test]
+    fn test_scratchpad_defaults() {
+        let config: ScratchpadDefaults = toml::from_str("").unwrap();
+        assert_eq!(config.default_size, "75% 60%");
+        assert_eq!(config.default_margin, 50);
+        assert!(config.move_to_workspace.is_none());
+    }
+
+    #[test]
+    fn test_scratchpad_defaults_custom() {
+        let toml = r#"
+default_size = "40% 80%"
+default_margin = 100
+move_to_workspace = "tmp"
+"#;
+        let config: ScratchpadDefaults = toml::from_str(toml).unwrap();
+        assert_eq!(config.default_size, "40% 80%");
+        assert_eq!(config.default_margin, 100);
+        assert_eq!(config.move_to_workspace.as_deref(), Some("tmp"));
+    }
+
+    // ==================== ScratchpadConfig ====================
+
+    #[test]
+    fn test_scratchpad_config_minimal() {
+        let toml = r#"
+direction = "fromRight"
+command = "ghostty"
+app_id = "float.term"
+size = "40% 60%"
+margin = 50
+"#;
+        let config: ScratchpadConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.direction, Direction::Right);
+        assert_eq!(config.command, "ghostty");
+        assert_eq!(config.app_id, "float.term");
+        assert_eq!(config.size, "40% 60%");
+        assert_eq!(config.margin, 50);
+        assert!(!config.swallow_to_focus);
+        assert!(!config.sticky);
+        assert!(!config.auto_hide_on_focus_loss);
+        assert!(!config.refocus);
+    }
+
+    #[test]
+    fn test_scratchpad_config_all_options() {
+        let toml = r#"
+direction = "fromTop"
+command = "gnome-text-editor"
+app_id = "org.gnome.TextEditor"
+size = "50% 40%"
+margin = 100
+swallow_to_focus = true
+sticky = true
+auto_hide_on_focus_loss = false
+refocus = true
+"#;
+        let config: ScratchpadConfig = toml::from_str(toml).unwrap();
+        assert!(config.swallow_to_focus);
+        assert!(config.sticky);
+        assert!(!config.auto_hide_on_focus_loss);
+        assert!(config.refocus);
+    }
+
+    #[test]
+    fn test_scratchpad_parse_size() {
+        let config = ScratchpadConfig {
+            direction: Direction::Right,
+            command: "test".into(),
+            app_id: "test".into(),
+            size: "40% 60%".into(),
+            margin: 50,
+            swallow_to_focus: false,
+            sticky: false,
+            auto_hide_on_focus_loss: false,
+            refocus: false,
+        };
+        let (w, h) = config.parse_size().unwrap();
+        assert!((w - 0.4).abs() < f64::EPSILON);
+        assert!((h - 0.6).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_scratchpad_parse_size_invalid() {
+        let config = ScratchpadConfig {
+            direction: Direction::Right,
+            command: "test".into(),
+            app_id: "test".into(),
+            size: "40%".into(),
+            margin: 50,
+            swallow_to_focus: false,
+            sticky: false,
+            auto_hide_on_focus_loss: false,
+            refocus: false,
+        };
+        assert!(config.parse_size().is_err());
+    }
+
+    // ==================== EmptyWorkspaceConfig ====================
+
+    #[test]
+    fn test_empty_workspace_config() {
+        let toml = "command = \"notify-send empty\"";
+        let config: EmptyWorkspaceConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.command, "notify-send empty");
+    }
+
+    // ==================== SingletonConfig ====================
+
+    #[test]
+    fn test_singleton_config_minimal() {
+        let toml = r#"command = "google-chrome""#;
+        let config: SingletonConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.command, "google-chrome");
+        assert!(config.app_id.is_none());
+        assert!(config.on_created_command.is_none());
+    }
+
+    #[test]
+    fn test_singleton_config_all_fields() {
+        let toml = r#"
+command = "ghostty --class=singleton.term"
+app_id = "singleton.term"
+on_created_command = "echo created"
+"#;
+        let config: SingletonConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.command, "ghostty --class=singleton.term");
+        assert_eq!(config.app_id.as_deref(), Some("singleton.term"));
+        assert_eq!(config.on_created_command.as_deref(), Some("echo created"));
+    }
+
+    // ==================== WindowRuleConfig ====================
+
+    #[test]
+    fn test_window_rule_config_app_id_string() {
+        let toml = r#"
+app_id = "firefox"
+open_on_workspace = "2"
+"#;
+        let config: WindowRuleConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.app_id, Some(vec!["firefox".to_string()]));
+        assert!(config.title.is_none());
+        assert_eq!(config.open_on_workspace.as_deref(), Some("2"));
+        assert!(config.focus_command.is_none());
+        assert!(!config.focus_command_once);
+    }
+
+    #[test]
+    fn test_window_rule_config_app_id_vec() {
+        let toml = r#"
+app_id = ["code", "code-oss", "codium"]
+open_on_workspace = "dev"
+"#;
+        let config: WindowRuleConfig = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.app_id,
+            Some(vec![
+                "code".to_string(),
+                "code-oss".to_string(),
+                "codium".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn test_window_rule_config_title_only() {
+        let toml = r#"
+title = ".*Chrome.*"
+focus_command = "notify-send 'focused'"
+"#;
+        let config: WindowRuleConfig = toml::from_str(toml).unwrap();
+        assert!(config.app_id.is_none());
+        assert_eq!(config.title, Some(vec![".*Chrome.*".to_string()]));
+        assert!(config.open_on_workspace.is_none());
+        assert_eq!(
+            config.focus_command.as_deref(),
+            Some("notify-send 'focused'")
+        );
+    }
+
+    #[test]
+    fn test_window_rule_config_focus_command_once() {
+        let toml = r#"
+app_id = "test"
+focus_command = "echo hi"
+focus_command_once = true
+"#;
+        let config: WindowRuleConfig = toml::from_str(toml).unwrap();
+        assert!(config.focus_command_once);
+    }
+
+    // ==================== WindowOrderSection ====================
+
+    #[test]
+    fn test_window_order_section_default() {
+        let config: WindowOrderSection = toml::from_str("").unwrap();
+        assert!(!config.enable_event_listener);
+        assert_eq!(config.default_weight, 0);
+        assert!(config.workspaces.is_empty());
+    }
+
+    #[test]
+    fn test_window_order_section_custom() {
+        let toml = r#"
+enable_event_listener = true
+default_weight = 10
+workspaces = ["1", "2", "dev"]
+"#;
+        let config: WindowOrderSection = toml::from_str(toml).unwrap();
+        assert!(config.enable_event_listener);
+        assert_eq!(config.default_weight, 10);
+        assert_eq!(config.workspaces, vec!["1", "2", "dev"]);
+    }
+
+    // ==================== MarkSection ====================
+
+    #[test]
+    fn test_mark_section_default() {
+        let config: MarkSection = toml::from_str("").unwrap();
+        assert!(!config.refocus);
+    }
+
+    #[test]
+    fn test_mark_section_refocus() {
+        let config: MarkSection = toml::from_str("refocus = true").unwrap();
+        assert!(config.refocus);
+    }
+
+    // ==================== SwallowSection ====================
+
+    #[test]
+    fn test_swallow_section_default() {
+        let config: SwallowSection = toml::from_str("").unwrap();
+        assert!(config.use_pid_matching);
+        assert!(config.rules.is_empty());
+        assert!(config.exclude.is_none());
+    }
+
+    #[test]
+    fn test_swallow_section_custom() {
+        let toml = r#"
+use_pid_matching = false
+
+[[rules]]
+child_app_id = ".*chrome.*"
+parent_app_id = ".*ghostty.*"
+
+[exclude]
+app_id = ".*mpv.*"
+"#;
+        let config: SwallowSection = toml::from_str(toml).unwrap();
+        assert!(!config.use_pid_matching);
+        assert_eq!(config.rules.len(), 1);
+        assert!(config.exclude.is_some());
+    }
+
+    // ==================== SwallowRule ====================
+
+    #[test]
+    fn test_swallow_rule_all_fields() {
+        let toml = r#"
+child_app_id = ".*chrome.*"
+child_title = ".*Chrome.*"
+parent_app_id = ".*ghostty.*"
+parent_title = ".*Ghostty.*"
+"#;
+        let rule: crate::plugins::swallow::SwallowRule = toml::from_str(toml).unwrap();
+        assert_eq!(rule.child_app_id, Some(vec![".*chrome.*".to_string()]));
+        assert_eq!(rule.child_title, Some(vec![".*Chrome.*".to_string()]));
+        assert_eq!(rule.parent_app_id, Some(vec![".*ghostty.*".to_string()]));
+        assert_eq!(rule.parent_title, Some(vec![".*Ghostty.*".to_string()]));
+    }
+
+    #[test]
+    fn test_swallow_rule_vec_app_id() {
+        let toml = r#"
+child_app_id = [".*chrome.*", ".*chromium.*"]
+parent_app_id = ".*ghostty.*"
+"#;
+        let rule: crate::plugins::swallow::SwallowRule = toml::from_str(toml).unwrap();
+        assert_eq!(
+            rule.child_app_id,
+            Some(vec![".*chrome.*".to_string(), ".*chromium.*".to_string()])
+        );
+    }
+
+    // ==================== SwallowExclude ====================
+
+    #[test]
+    fn test_swallow_exclude() {
+        let toml = r#"
+app_id = ".*mpv.*"
+title = ".*mpv.*"
+"#;
+        let exclude: crate::plugins::swallow::SwallowExclude = toml::from_str(toml).unwrap();
+        assert_eq!(exclude.app_id, Some(vec![".*mpv.*".to_string()]));
+        assert_eq!(exclude.title, Some(vec![".*mpv.*".to_string()]));
+    }
+
+    // ==================== WorkspaceRuleConfig ====================
+
+    #[test]
+    fn test_workspace_rule_config_minimal() {
+        // auto_width is optional after the fix
+        let toml = "auto_maximize = true";
+        let config: WorkspaceRuleConfig = toml::from_str(toml).unwrap();
+        assert!(config.auto_width.is_empty());
+        assert!(!config.auto_tile);
+        assert!(!config.auto_fill);
+        assert!(config.auto_maximize);
+    }
+
+    #[test]
+    fn test_workspace_rule_config_auto_width_strings() {
+        let toml = r#"auto_width = ["100%", "50%", "33.33%"]"#;
+        let config: WorkspaceRuleConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.auto_width.len(), 3);
+        assert_eq!(config.auto_width[0], vec!["100%"]);
+        assert_eq!(config.auto_width[1], vec!["50%"]);
+        assert_eq!(config.auto_width[2], vec!["33.33%"]);
+    }
+
+    #[test]
+    fn test_workspace_rule_config_auto_width_nested() {
+        let toml = r#"auto_width = ["100%", ["45%", "55%"], "33.33%"]"#;
+        let config: WorkspaceRuleConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.auto_width.len(), 3);
+        assert_eq!(config.auto_width[0], vec!["100%"]);
+        assert_eq!(config.auto_width[1], vec!["45%", "55%"]);
+        assert_eq!(config.auto_width[2], vec!["33.33%"]);
+    }
+
+    #[test]
+    fn test_workspace_rule_config_auto_width_deep_nested() {
+        let toml = r#"auto_width = ["100%", "50%", ["30%", "35%", "35%"]]"#;
+        let config: WorkspaceRuleConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.auto_width.len(), 3);
+        assert_eq!(config.auto_width[2], vec!["30%", "35%", "35%"]);
+    }
+
+    #[test]
+    fn test_workspace_rule_config_auto_tile_and_fill() {
+        let toml = r#"
+auto_tile = true
+auto_fill = true
+"#;
+        let config: WorkspaceRuleConfig = toml::from_str(toml).unwrap();
+        assert!(config.auto_tile);
+        assert!(config.auto_fill);
+    }
+
+    // ==================== WorkspaceRuleSection ====================
+
+    #[test]
+    fn test_workspace_rule_section_default() {
+        let config: WorkspaceRuleSection = toml::from_str("").unwrap();
+        assert!(config.auto_width.is_empty());
+        assert!(!config.auto_tile);
+        assert!(!config.auto_fill);
+        assert!(!config.auto_maximize);
+    }
+
+    #[test]
+    fn test_workspace_rule_section_custom() {
+        let toml = r#"
+auto_width = ["100%", "50%"]
+auto_maximize = true
+"#;
+        let config: WorkspaceRuleSection = toml::from_str(toml).unwrap();
+        assert_eq!(config.auto_width.len(), 2);
+        assert!(config.auto_maximize);
+    }
+
+    // ==================== EdgePulseConfig ====================
+
+    #[test]
+    fn test_edge_pulse_config_default() {
+        let config: EdgePulseConfig = toml::from_str("").unwrap();
+        assert!(!config.enabled);
+        assert!(config.show_left);
+        assert!(config.show_right);
+        assert_eq!(config.width, 14);
+        assert!((config.height_ratio - 0.42).abs() < f64::EPSILON);
+        assert_eq!(config.left_gradient_start, "#68d8ff");
+        assert_eq!(config.left_gradient_end, "#1f4fff");
+        assert_eq!(config.right_gradient_start, "#ffd36a");
+        assert_eq!(config.right_gradient_end, "#ff7a1f");
+        assert!((config.alpha - 0.85).abs() < f64::EPSILON);
+        assert!(!config.animation_enabled);
+        assert_eq!(config.animation_style, "pulse");
+        assert!((config.animation_duration - 600.0).abs() < f64::EPSILON);
+        assert!((config.animation_amplitude - 0.8).abs() < f64::EPSILON);
+        assert_eq!(config.animation_repeat, 3);
+    }
+
+    #[test]
+    fn test_edge_pulse_config_custom() {
+        let toml = "\
+enabled = true
+show_left = false
+show_right = false
+width = 20
+height_ratio = 0.5
+left_gradient_start = \"#ff0000\"
+left_gradient_end = \"#00ff00\"
+right_gradient_start = \"#0000ff\"
+right_gradient_end = \"#ffff00\"
+alpha = 1.0
+animation_enabled = true
+animation_style = \"fade\"
+animation_duration = 300.0
+animation_amplitude = 0.5
+animation_repeat = 0
+";
+        let config: EdgePulseConfig = toml::from_str(toml).unwrap();
+        assert!(config.enabled);
+        assert!(!config.show_left);
+        assert!(!config.show_right);
+        assert_eq!(config.width, 20);
+        assert!((config.height_ratio - 0.5).abs() < f64::EPSILON);
+        assert_eq!(config.left_gradient_start, "#ff0000");
+        assert_eq!(config.animation_style, "fade");
+        assert_eq!(config.animation_repeat, 0);
+    }
+
+    // ==================== PiriConfig ====================
+
+    #[test]
+    fn test_piri_config_default() {
+        let config: PiriConfig = toml::from_str("").unwrap();
+        assert_eq!(config.swallow.use_pid_matching, true);
+        assert!(config.mark.refocus == false);
+    }
+
+    // ==================== Config (root) ====================
+
+    #[test]
+    fn test_config_empty() {
+        let config: Config = toml::from_str("").unwrap();
+        assert!(config.scratchpads.is_empty());
+        assert!(config.empty.is_empty());
+        assert!(config.window_rule.is_empty());
+        assert!(config.window_order.is_empty());
+        assert!(config.swallow.is_empty());
+        assert!(config.workspace_rule.is_empty());
+    }
+
+    #[test]
+    fn test_config_example_parses() {
+        let content = include_str!("../config.example.toml");
+        let config: Config =
+            toml::from_str(content).expect("config.example.toml should parse without errors");
+
+        // workspace_rule.main should work with only auto_maximize (no auto_width required)
+        let main_rule =
+            config.workspace_rule.get("main").expect("workspace_rule.main should exist");
+        assert!(main_rule.auto_maximize);
+        assert!(main_rule.auto_width.is_empty());
+
+        // workspace_rule.browser should have nested auto_width
+        let browser_rule = config
+            .workspace_rule
+            .get("browser")
+            .expect("workspace_rule.browser should exist");
+        assert_eq!(browser_rule.auto_width.len(), 3);
+        assert_eq!(browser_rule.auto_width[0], vec!["100%"]);
+        assert_eq!(browser_rule.auto_width[1], vec!["45%", "55%"]);
+        assert_eq!(browser_rule.auto_width[2], vec!["33.33%"]);
+    }
+
+    #[test]
+    fn test_config_full_minimal() {
+        let toml = r#"
+[niri]
+socket_path = "/tmp/niri"
+
+[piri.plugins]
+scratchpads = true
+
+[scratchpads.term]
+direction = "fromRight"
+command = "ghostty"
+app_id = "float.term"
+size = "40% 60%"
+margin = 50
+
+[empty.1]
+command = "notify-send empty"
+
+[singleton.browser]
+command = "google-chrome"
+
+[[window_rule]]
+app_id = "firefox"
+open_on_workspace = "2"
+
+[window_order]
+firefox = 100
+
+[[swallow]]
+child_app_id = ".*chrome.*"
+parent_app_id = ".*ghostty.*"
+
+[workspace_rule.main]
+auto_width = ["100%", "50%"]
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.niri.socket_path.as_deref(), Some("/tmp/niri"));
+        assert!(config.scratchpads.contains_key("term"));
+        assert!(config.empty.contains_key("1"));
+        assert!(config.singleton.contains_key("browser"));
+        assert_eq!(config.window_rule.len(), 1);
+        assert_eq!(config.window_order.get("firefox"), Some(&100));
+        assert_eq!(config.swallow.len(), 1);
+        assert!(config.workspace_rule.contains_key("main"));
+    }
+
+    // ==================== deserialize_string_or_vec ====================
+
+    #[test]
+    fn test_deserialize_string_or_vec_string() {
+        let toml = r#"
+app_id = "firefox"
+open_on_workspace = "2"
+"#;
+        let config: WindowRuleConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.app_id, Some(vec!["firefox".to_string()]));
+    }
+
+    #[test]
+    fn test_deserialize_string_or_vec_vec() {
+        let toml = r#"
+app_id = ["firefox", "chromium"]
+open_on_workspace = "2"
+"#;
+        let config: WindowRuleConfig = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.app_id,
+            Some(vec!["firefox".to_string(), "chromium".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_deserialize_string_or_vec_none() {
+        let toml = r#"
+open_on_workspace = "2"
+"#;
+        let config: WindowRuleConfig = toml::from_str(toml).unwrap();
+        assert!(config.app_id.is_none());
+    }
+
+    // ==================== deserialize_auto_width ====================
+
+    #[test]
+    fn test_auto_width_single_string() {
+        let toml = r#"auto_width = ["100%"]"#;
+        let config: WorkspaceRuleConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.auto_width, vec![vec!["100%"]]);
+    }
+
+    #[test]
+    fn test_auto_width_mixed() {
+        let toml = r#"auto_width = ["100%", ["45%", "55%"]]"#;
+        let config: WorkspaceRuleConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.auto_width, vec![vec!["100%"], vec!["45%", "55%"]]);
+    }
+
+    #[test]
+    fn test_auto_width_empty() {
+        let toml = "auto_maximize = true";
+        let config: WorkspaceRuleConfig = toml::from_str(toml).unwrap();
+        assert!(config.auto_width.is_empty());
+    }
+
+    // ==================== ScratchpadConfig TryFrom ====================
+
+    #[test]
+    fn test_scratchpad_try_from_table() {
+        let mut table = toml::Table::new();
+        table.insert("direction".into(), "fromRight".into());
+        table.insert("command".into(), "ghostty".into());
+        table.insert("app_id".into(), "float.term".into());
+        table.insert("size".into(), "40% 60%".into());
+        table.insert("margin".into(), 50i64.into());
+        table.insert("swallow_to_focus".into(), true.into());
+        table.insert("sticky".into(), false.into());
+        table.insert("auto_hide_on_focus_loss".into(), false.into());
+        table.insert("refocus".into(), false.into());
+
+        let config = ScratchpadConfig::try_from(table).unwrap();
+        assert_eq!(config.direction, Direction::Right);
+        assert!(config.swallow_to_focus);
+    }
+
+    #[test]
+    fn test_scratchpad_try_from_sticky_conflict() {
+        let mut table = toml::Table::new();
+        table.insert("direction".into(), "fromRight".into());
+        table.insert("command".into(), "ghostty".into());
+        table.insert("app_id".into(), "float.term".into());
+        table.insert("size".into(), "40% 60%".into());
+        table.insert("margin".into(), 50i64.into());
+        table.insert("sticky".into(), true.into());
+        table.insert("auto_hide_on_focus_loss".into(), true.into());
+
+        assert!(ScratchpadConfig::try_from(table).is_err());
+    }
+
+    // ==================== WorkspaceRuleConfig + EdgePulse nested ====================
+
+    #[test]
+    fn test_workspace_rule_with_edge_pulse() {
+        let full_toml = r#"
+[workspace_rule.main]
+auto_width = ["100%", "50%"]
+
+[workspace_rule.main.edge_pulse]
+enabled = true
+width = 20
+"#;
+        let config: Config = toml::from_str(full_toml).unwrap();
+        let rule = config.workspace_rule.get("main").unwrap();
+        assert!(rule.edge_pulse.enabled);
+        assert_eq!(rule.edge_pulse.width, 20);
+    }
+
+    #[test]
+    fn test_piri_workspace_rule_with_edge_pulse() {
+        let full_toml = r#"
+[piri.workspace_rule]
+auto_width = ["100%", "50%"]
+
+[piri.workspace_rule.edge_pulse]
+enabled = true
+width = 20
+"#;
+        let config: Config = toml::from_str(full_toml).unwrap();
+        assert!(config.piri.workspace_rule.edge_pulse.enabled);
+        assert_eq!(config.piri.workspace_rule.edge_pulse.width, 20);
     }
 }
