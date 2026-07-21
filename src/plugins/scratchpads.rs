@@ -270,6 +270,7 @@ impl ScratchpadManager {
             &self.niri, window_id, current_x, current_y, target_x, target_y,
         )
         .await?;
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
         if is_visible {
             window_utils::focus_window(self.niri.clone(), window_id).await?;
