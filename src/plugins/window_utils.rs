@@ -266,8 +266,12 @@ impl WindowMatcherCache {
             }
         }
         // Drop the lock before compiling (potentially slow)
+        // Compile case-insensitive to handle app_id/title case variations
+        // (e.g. "Alacritty" vs "alacritty")
         let regex = Arc::new(
-            Regex::new(pattern)
+            regex::RegexBuilder::new(pattern)
+                .case_insensitive(true)
+                .build()
                 .with_context(|| format!("Failed to compile regex pattern: {}", pattern))?,
         );
         let mut cache = self.regex_cache.lock().unwrap();
