@@ -391,56 +391,24 @@ impl ScratchpadManager {
         // 2. Ensure window exists and is set up
         let window_id = self.ensure_window_id(name).await?;
 
-        // Get config early to check refocus setting
-        let config = self.states.get(name).map(|s| s.config.clone()).context("State not found")?;
+        // 3. Ensure window is floating; if not, make it floating.
+        // setup_window should have already made the window floating, but
+        // there can be a race where get_windows_raw still reports it as tiled.
+        let is_floating = self
+            .niri
+            .get_windows_raw()
+            .await?
+            .iter()
+            .find(|w| w.id == window_id)
+            .map(|w| w.floating)
+            .unwrap_or(false);
 
-        // 3. Check if window is floating, if not, handle as tiled window
-        if let Some(window) =
-            self.niri.get_windows_raw().await?.into_iter().find(|w| w.id == window_id)
-        {
-            debug!(
-                "Scratchpad '{}' window {} floating status: {}",
-                name, window_id, window.floating
+        if !is_floating {
+            warn!(
+                "Scratchpad '{}' window {} is not floating after setup_window, retrying set_window_floating",
+                name, window_id
             );
-            if !window.floating {
-                debug!(
-                    "Scratchpad '{}' window {} is tiled, handling focus toggle",
-                    name, window_id
-                );
-                let state = self.states.get_mut(name).unwrap();
-
-                // Check if the scratchpad window is currently focused
-                if let Ok(current) = window_utils::get_focused_window(&self.niri).await {
-                    if current.id == window_id {
-                        // Window is already focused, try refocus if enabled
-                        if config.refocus
-                            && window_utils::try_refocus_to_previous(
-                                &self.niri,
-                                window_id,
-                                &mut state.previous_focused_window,
-                            )
-                            .await?
-                        {
-                            return Ok(());
-                        }
-                        // Already focused and refocus not enabled or failed, do nothing
-                        return Ok(());
-                    } else {
-                        // Window is not focused, save current focus and focus the scratchpad
-                        debug!(
-                            "Saving previous window {} before focusing scratchpad",
-                            current.id
-                        );
-                        state.previous_focused_window = Some(current.id);
-                    }
-                } else {
-                    // No focused window, clear previous
-                    state.previous_focused_window = None;
-                }
-
-                window_utils::focus_window(self.niri.clone(), window_id).await?;
-                return Ok(());
-            }
+            self.niri.set_window_floating(window_id, true).await?;
         }
 
         // Collect all scratchpad window IDs before getting mutable borrow

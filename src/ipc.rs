@@ -155,8 +155,10 @@ impl IpcClient {
         .context("Failed to write request data")?;
 
         // Read response length
+        // Use 30s timeout for long-running operations like scratchpad toggle
+        // which can involve launching an app and waiting for its window to appear.
         let response_len =
-            tokio::time::timeout(std::time::Duration::from_secs(5), stream.read_u32())
+            tokio::time::timeout(std::time::Duration::from_secs(30), stream.read_u32())
                 .await
                 .context("Timeout reading response length")?
                 .context("Failed to read response length")?;
@@ -164,7 +166,7 @@ impl IpcClient {
         // Read response data
         let mut response_bytes = vec![0u8; response_len as usize];
         tokio::time::timeout(
-            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(30),
             stream.read_exact(&mut response_bytes),
         )
         .await
