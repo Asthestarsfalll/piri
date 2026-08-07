@@ -347,7 +347,10 @@ impl NiriIpc {
                         return Ok(Workspace {
                             id: workspace.id,
                             idx: workspace.idx,
-                            name: workspace.idx.to_string(),
+                            name: workspace
+                                .name
+                                .clone()
+                                .unwrap_or_else(|| workspace.idx.to_string()),
                             output: workspace.output.clone(),
                             focused: true,
                         });
