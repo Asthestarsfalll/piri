@@ -11,6 +11,7 @@ When a child window is opened:
    - **PID-based matching** (default): Traces the process tree to find if the child process was spawned from a parent process
    - **Rule-based matching**: Matches parent windows by `app_id`, `title`, or `pid` patterns
 3. **Swallow Operation**: If a matching parent is found, the child window is "swallowed" into the parent's column position, effectively replacing it
+4. **Column Display Restore**: Before swallowing, the plugin remembers the parent column's display mode (`tabbed` or `normal`). When the swallowed child window later closes, the column's display mode is restored to what it was before the swallow, so the parent column doesn't permanently switch to tabbed mode
 
 ## Configuration
 
@@ -247,6 +248,17 @@ The plugin performs the following operations when swallowing:
 6. Focuses the child window
 
 All operations are performed in a single batch for better performance and atomicity.
+
+### Column Display Restore
+
+When a swallowed child window closes, the plugin restores the parent column's display mode to the value it had before the swallow:
+
+1. Focuses the parent window
+2. Sets the column display back to the saved mode (`normal` or `tabbed`)
+
+This prevents the parent column from permanently switching to tabbed mode after a swallow completes (which would otherwise affect how new windows open in that column). If multiple child windows were swallowed into the same column, the restore happens only after the last one closes, so windows still swallowed stay hidden as tabs.
+
+Since niri's IPC does not expose the column display mode directly, it is inferred from window geometry: windows in a tabbed column all occupy the same full-height tile (identical sizes), while windows in a normal column are stacked with different (or shorter) tiles. If the mode cannot be determined reliably, the plugin simply leaves the column as is (no restore).
 
 ## Use Cases
 

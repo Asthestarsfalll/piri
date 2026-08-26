@@ -1,11 +1,18 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use log::{debug, info, warn};
-use niri_ipc::ColumnDisplay;
+use niri_ipc::{Action, ColumnDisplay, Reply, Request};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+/// Maximum difference (in logical pixels) between window sizes still considered equal
+/// when determining whether a column is tabbed.
+const SWALLOW_SIZE_TOLERANCE: u32 = 2;
+/// A column is considered tabbed when all of its windows share a size that spans at
+/// least this fraction of the output height.
+const TABBED_HEIGHT_RATIO: f64 = 0.6;
 
 use crate::config::{deserialize_string_or_vec, Config};
 use crate::niri::NiriIpc;
@@ -75,6 +82,20 @@ pub struct SwallowPlugin {
     matcher_cache: Arc<WindowMatcherCache>,
     window_pid_map: Arc<Mutex<HashMap<u32, Vec<u64>>>>,
     focused_window_queue: VecDeque<u64>,
+    /// Column display modes to restore once active swallows complete, keyed by
+    /// (workspace id, column index).
+    pending_column_restores: HashMap<(Option<u64>, usize), PendingColumnRestore>,
+}
+
+/// Column display mode to restore after a swallow completes.
+struct PendingColumnRestore {
+    /// Window that was focused when the swallow happened; used to select the column
+    /// when restoring.
+    parent_id: u64,
+    /// The column display mode observed before the swallow.
+    display: ColumnDisplay,
+    /// Child windows currently swallowed into this column.
+    child_ids: Vec<u64>,
 }
 
 impl SwallowPlugin {
@@ -103,6 +124,7 @@ impl SwallowPlugin {
             matcher_cache: Arc::new(WindowMatcherCache::new()),
             window_pid_map,
             focused_window_queue: VecDeque::with_capacity(5),
+            pending_column_restores: HashMap::new(),
         }
     }
 
@@ -327,6 +349,189 @@ impl SwallowPlugin {
         Ok(Some(focused_window))
     }
 
+    /// Determine the display mode (Tabbed/Normal) of the column containing `window`.
+    ///
+    /// niri's IPC does not expose the column display mode directly, so it is inferred
+    /// from window geometry: windows in a tabbed column all occupy the same full-height
+    /// tile (identical sizes), while windows in a normal column are stacked with
+    /// different (or shorter) tiles.
+    ///
+    /// Returns `None` when the mode cannot be determined reliably, in which case the
+    /// caller should not schedule a restore.
+    async fn detect_column_display(
+        &self,
+        window: &crate::niri::Window,
+    ) -> Result<Option<ColumnDisplay>> {
+        let Some((col_idx, _)) = window.layout.as_ref().and_then(|l| l.pos_in_scrolling_layout)
+        else {
+            // Not in a tiled column (e.g. floating); nothing to restore.
+            return Ok(None);
+        };
+
+        let windows = self.niri.get_windows_raw().await?;
+
+        // All tiled windows in the same workspace and column as `window`.
+        let column_windows: Vec<&crate::niri::Window> = windows
+            .iter()
+            .filter(|w| {
+                !w.floating
+                    && w.workspace_id == window.workspace_id
+                    && w.layout
+                        .as_ref()
+                        .and_then(|l| l.pos_in_scrolling_layout)
+                        .map(|(col, _)| col == col_idx)
+                        .unwrap_or(false)
+            })
+            .collect();
+
+        // A column with a single window is always displayed normally by niri.
+        if column_windows.len() <= 1 {
+            return Ok(Some(ColumnDisplay::Normal));
+        }
+
+        // Windows in a tabbed column all have the same size.
+        let Some(first_size) = column_windows[0].layout.as_ref().and_then(|l| l.window_size) else {
+            return Ok(None);
+        };
+        let all_same_size = column_windows.iter().all(|w| {
+            w.layout.as_ref().and_then(|l| l.window_size).is_some_and(|size| {
+                size[0].abs_diff(first_size[0]) <= SWALLOW_SIZE_TOLERANCE
+                    && size[1].abs_diff(first_size[1]) <= SWALLOW_SIZE_TOLERANCE
+            })
+        });
+        if !all_same_size {
+            // Stacked windows in a normal column have different tile sizes.
+            return Ok(Some(ColumnDisplay::Normal));
+        }
+
+        // All windows share one size: it is a tabbed column only if the shared height
+        // spans most of the output height; an equally-split normal column is only about
+        // half as tall.
+        let Some(output_height) = self.output_height_for_window(window).await? else {
+            return Ok(None);
+        };
+        let common_height = f64::from(first_size[1]);
+        Ok(Some(
+            if common_height >= output_height * TABBED_HEIGHT_RATIO {
+                ColumnDisplay::Tabbed
+            } else {
+                ColumnDisplay::Normal
+            },
+        ))
+    }
+
+    /// Resolve the logical height of the output the given window's workspace is on.
+    async fn output_height_for_window(&self, window: &crate::niri::Window) -> Result<Option<f64>> {
+        let Some(workspace_id) = window.workspace_id else {
+            return Ok(None);
+        };
+        let workspaces = self.niri.get_workspaces_for_mapping().await?;
+        let Some(workspace) = workspaces.iter().find(|ws| ws.id == workspace_id) else {
+            return Ok(None);
+        };
+        let Some(output_name) = workspace.output.as_deref() else {
+            return Ok(None);
+        };
+        Ok(self
+            .niri
+            .get_output_size_by_name(output_name)
+            .map(|(_, height)| f64::from(height)))
+    }
+
+    /// Remember the parent column's display mode so it can be restored once the
+    /// swallowed child window closes. The display mode is only saved on the first
+    /// swallow into a column; later swallows into the same column keep the original
+    /// value (which was observed before any swallow).
+    async fn record_column_display_for_swallow(
+        &mut self,
+        parent_window: &crate::niri::Window,
+        child_window_id: u64,
+    ) -> Result<()> {
+        let Some((col_idx, _)) =
+            parent_window.layout.as_ref().and_then(|l| l.pos_in_scrolling_layout)
+        else {
+            return Ok(());
+        };
+
+        let Some(display) = self.detect_column_display(parent_window).await? else {
+            return Ok(());
+        };
+
+        debug!(
+            "Saving column display {:?} before swallowing window {} into parent {}",
+            display, child_window_id, parent_window.id
+        );
+
+        let key = (parent_window.workspace_id, col_idx);
+        self.pending_column_restores
+            .entry(key)
+            .or_insert_with(|| PendingColumnRestore {
+                parent_id: parent_window.id,
+                display,
+                child_ids: Vec::new(),
+            })
+            .child_ids
+            .push(child_window_id);
+
+        Ok(())
+    }
+
+    /// Restore the column display mode saved before a swallow once the swallowed child
+    /// window closes. The restore is delayed until the last swallowed child of the
+    /// column has closed, so windows that are still swallowed stay hidden as tabs.
+    async fn restore_column_display_on_window_closed(&mut self, window_id: u64) -> Result<()> {
+        let Some(key) = self
+            .pending_column_restores
+            .iter()
+            .find_map(|(key, entry)| entry.child_ids.contains(&window_id).then_some(*key))
+        else {
+            return Ok(());
+        };
+
+        let should_restore = {
+            let entry = self.pending_column_restores.get_mut(&key).unwrap();
+            entry.child_ids.retain(|&id| id != window_id);
+            entry.child_ids.is_empty()
+        };
+        if !should_restore {
+            // Other swallowed children are still open in this column.
+            return Ok(());
+        }
+
+        let PendingColumnRestore {
+            parent_id, display, ..
+        } = self.pending_column_restores.remove(&key).unwrap();
+
+        // The parent window selects the column; if it is gone there is nothing to restore.
+        let windows = self.niri.get_windows_raw().await?;
+        if !windows.iter().any(|w| w.id == parent_id) {
+            debug!(
+                "Parent window {} for column display restore is gone, skipping",
+                parent_id
+            );
+            return Ok(());
+        }
+
+        info!(
+            "Restoring column display to {:?} after swallowed window {} closed",
+            display, window_id
+        );
+
+        self.niri
+            .execute_batch(move |socket| {
+                // Focus the parent window to select its column, then restore the display.
+                match socket.send(Request::Action(Action::FocusWindow { id: parent_id }))? {
+                    Reply::Ok(_) => {}
+                    Reply::Err(err) => anyhow::bail!("Failed to focus parent window: {}", err),
+                }
+                let _ = socket.send(Request::Action(Action::SetColumnDisplay { display }))?;
+                Ok::<(), anyhow::Error>(())
+            })
+            .await?;
+
+        Ok(())
+    }
+
     async fn handle_window_opened(&mut self, window: &niri_ipc::Window) -> Result<()> {
         let window_id = window.id;
 
@@ -382,6 +587,7 @@ impl SwallowPlugin {
             if let Some(parent_window) =
                 try_pid_matching(&child_window, &windows, self.window_pid_map.clone()).await?
             {
+                self.record_column_display_for_swallow(&parent_window, window_id).await?;
                 perform_swallow(
                     &self.niri,
                     &parent_window,
@@ -429,6 +635,7 @@ impl SwallowPlugin {
                         "Found matching parent window {} for rule {}, performing swallow",
                         parent_window.id, rule_idx
                     );
+                    self.record_column_display_for_swallow(&parent_window, window_id).await?;
                     perform_swallow(
                         &self.niri,
                         &parent_window,
@@ -505,6 +712,13 @@ impl crate::plugins::Plugin for SwallowPlugin {
 
                 // Remove window id from focused window queue
                 self.focused_window_queue.retain(|&window_id| window_id != *id);
+
+                // Restore the column display mode saved before the swallow, now that
+                // the swallowed child window has closed.
+                self.restore_column_display_on_window_closed(*id).await?;
+
+                // Drop pending restores whose parent window was closed.
+                self.pending_column_restores.retain(|_, entry| entry.parent_id != *id);
             }
             crate::plugins::PiriEvent::WindowFocusTimestampChanged { id, .. } => {
                 // Add new focused window to queue
