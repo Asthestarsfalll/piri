@@ -448,6 +448,7 @@ swallow = true
 
 [piri.swallow]
 use_pid_matching = true  # Enable PID-based parent-child process matching (default: true)
+swallow_on_change = false  # Re-check swallow rules when title/app_id changes (default: false)
 
 # Global exclude rule (optional)
 [piri.swallow.exclude]

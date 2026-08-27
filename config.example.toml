@@ -173,6 +173,9 @@ ghostty = 70
 
 [piri.swallow]
 use_pid_matching=false
+# Re-check swallow rules when a window's title/app_id changes (default: false)
+# e.g. Firefox extension windows open with "Mozilla Firefox" and update to "Extension: ..."
+swallow_on_change=false
 
 [piri.swallow.exclude]
 app_id = ".*mpv.*"

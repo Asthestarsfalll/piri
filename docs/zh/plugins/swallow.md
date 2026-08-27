@@ -24,6 +24,8 @@ swallow = true
 [piri.swallow]
 # 启用基于 PID 的父子进程匹配（默认：true）
 use_pid_matching = true
+# 窗口 title/app_id 变化时重新检查吞噬规则（默认：false）
+swallow_on_change = false
 
 # 全局排除规则：匹配这些条件的窗口永远不会被吞噬
 [piri.swallow.exclude]
@@ -49,6 +51,7 @@ child_app_id = [".*preview.*", ".*markdown.*"]
 | 参数 | 类型 | 说明 |
 | :--- | :--- | :--- |
 | `use_pid_matching` | `bool` | 启用基于 PID 的父子进程匹配（默认：`true`） |
+| `swallow_on_change` | `bool` | 窗口 `title` 或 `app_id` 变化时重新检查吞噬规则（默认：`false`） |
 | `exclude` | `SwallowExclude` | 全局排除规则，匹配这些条件的窗口永远不会被吞噬（可选） |
 
 ### 规则配置参数
@@ -198,6 +201,28 @@ parent_title = [".*Terminal.*"]
 child_title = [".*Video Player.*"]
 ```
 
+### 窗口标题变化时吞噬
+
+某些应用打开时使用通用标题，之后才设置真实标题 —— 例如 Firefox 扩展窗口（Bitwarden、aria2 下载器等）打开时是 `Mozilla Firefox`，完全加载后才更新为 `Extension: ...`。由于规则只匹配最终标题，窗口在打开时不会匹配。
+
+设置 `swallow_on_change = true` 后，窗口的 `title` 或 `app_id` 变化时会重新执行吞噬规则：
+
+```toml
+[piri.swallow]
+use_pid_matching = true
+swallow_on_change = true
+
+[[swallow]]
+child_title = ".*Extension:.*"
+parent_title = ".*firefox.*"
+```
+
+窗口以 `Mozilla Firefox` 打开（不匹配，不吞噬），标题更新为如 `Extension: Bitwarden` 后，插件重新检查规则并吞噬到匹配的 Firefox 父窗口中。普通 Firefox 窗口不受影响。
+
+注意：
+- 配置了规则时，PID 匹配只会吞噬至少匹配一条规则子条件的窗口，因此最终标题会被尊重，而不会在打开时就被提前吞噬。
+- 已吞噬的窗口在后续变化时会被跳过，无关的属性变化（布局、工作区等）不会触发重新检查。
+
 ### 复杂示例：多个模式
 
 ```toml
@@ -210,6 +235,7 @@ child_app_id = ["mpv", "imv", "feh", "sxiv"]
 
 - 如果未指定规则，插件会启用但不会匹配任何窗口
 - 如果未指定，`use_pid_matching` 默认为 `true`
+- 如果未指定，`swallow_on_change` 默认为 `false`
 - 如果未指定 `exclude`，则不会进行全局排除
 - 如果未指定子窗口条件，规则将匹配任何子窗口并查找父窗口
 - 如果未指定父窗口条件（启用 PID 匹配时），任何祖先窗口都会匹配

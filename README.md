@@ -482,6 +482,7 @@ swallow = true
 
 [piri.swallow]
 use_pid_matching = true  # 启用基于 PID 的父子进程匹配（默认：true）
+swallow_on_change = false  # 窗口 title/app_id 变化时重新检查吞噬规则（默认：false）
 
 # 全局排除规则（可选）
 [piri.swallow.exclude]

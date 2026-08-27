@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use log::{debug, info, warn};
 use niri_ipc::{Action, ColumnDisplay, Reply, Request};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -47,6 +47,10 @@ pub struct SwallowPluginConfig {
     pub rules: Vec<SwallowRule>,
     #[serde(default = "default_true")]
     pub use_pid_matching: bool,
+    /// Re-check swallow rules when a window's title or app_id changes
+    /// (e.g. Firefox extension windows that set their real title after opening).
+    #[serde(default)]
+    pub swallow_on_change: bool,
     #[serde(default)]
     pub exclude: Option<SwallowExclude>,
 }
@@ -60,6 +64,7 @@ impl Default for SwallowPluginConfig {
         Self {
             rules: Vec::new(),
             use_pid_matching: true,
+            swallow_on_change: false,
             exclude: None,
         }
     }
@@ -71,6 +76,7 @@ impl FromConfig for SwallowPluginConfig {
         Some(Self {
             rules: config.swallow.clone(),
             use_pid_matching: config.piri.swallow.use_pid_matching,
+            swallow_on_change: config.piri.swallow.swallow_on_change,
             exclude: config.piri.swallow.exclude.clone(),
         })
     }
@@ -82,6 +88,12 @@ pub struct SwallowPlugin {
     matcher_cache: Arc<WindowMatcherCache>,
     window_pid_map: Arc<Mutex<HashMap<u32, Vec<u64>>>>,
     focused_window_queue: VecDeque<u64>,
+    /// Windows already swallowed into a parent; they are skipped when their
+    /// title/app_id changes so the swallow is not performed twice.
+    swallowed_windows: HashSet<u64>,
+    /// Last (app_id, title) observed per window, used to detect identity
+    /// changes that should trigger a swallow re-check.
+    last_checked_state: HashMap<u64, (Option<String>, String)>,
     /// Column display modes to restore once active swallows complete, keyed by
     /// (workspace id, column index).
     pending_column_restores: HashMap<(Option<u64>, usize), PendingColumnRestore>,
@@ -124,6 +136,8 @@ impl SwallowPlugin {
             matcher_cache: Arc::new(WindowMatcherCache::new()),
             window_pid_map,
             focused_window_queue: VecDeque::with_capacity(5),
+            swallowed_windows: HashSet::new(),
+            last_checked_state: HashMap::new(),
             pending_column_restores: HashMap::new(),
         }
     }
@@ -569,34 +583,84 @@ impl SwallowPlugin {
             self.focused_window_queue
         );
 
+        // Record the window identity so later title/app_id changes can be detected
+        // by handle_window_changed.
+        self.last_checked_state.insert(
+            window_id,
+            (child_window.app_id.clone(), child_window.title.clone()),
+        );
+
+        if self.try_swallow_window(&child_window).await? {
+            // Mark as swallowed so later property changes don't re-swallow it.
+            self.swallowed_windows.insert(window_id);
+        }
+
+        Ok(())
+    }
+
+    /// Check whether the window matches any rule's child criteria.
+    ///
+    /// Used to guard PID matching: when rules exist, PID matching should only
+    /// swallow windows that match at least one rule's child conditions, so
+    /// windows opening with a generic title (e.g. Firefox extension popups
+    /// showing "Mozilla Firefox" before updating to "Extension: ...") are not
+    /// swallowed before their real identity is known.
+    async fn window_matches_any_rule_child(
+        &self,
+        child_window: &crate::niri::Window,
+    ) -> Result<bool> {
+        for rule in &self.config.rules {
+            if self
+                .check_child_window_matches_rule(child_window, child_window.id, rule)
+                .await?
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Try to swallow the given child window into a matching parent window.
+    ///
+    /// Returns `true` if the window was swallowed. Used both when a window first
+    /// opens and when its title/app_id changes afterwards.
+    async fn try_swallow_window(&mut self, child_window: &crate::niri::Window) -> Result<bool> {
+        let window_id = child_window.id;
+
         // Check if child window matches exclude rule
         if let Some(ref exclude) = self.config.exclude {
-            let matches_exclude = self.check_window_matches_exclude(&child_window, exclude).await?;
+            let matches_exclude = self.check_window_matches_exclude(child_window, exclude).await?;
             if matches_exclude {
                 debug!(
                     "Child window {} (app_id={:?}, title={}) matches exclude rule, skipping swallow",
                     window_id, child_window.app_id, child_window.title
                 );
-                return Ok(());
+                return Ok(false);
             }
         }
 
-        // Priority 1: Try PID matching first (if enabled)
-        if self.config.use_pid_matching {
+        // Priority 1: Try PID matching first (if enabled).
+        // Only swallow via PID matching when the child matches at least one
+        // rule's child criteria (or when no rules are configured), so rule
+        // conditions are respected even in the PID path.
+        if self.config.use_pid_matching
+            && (self.config.rules.is_empty()
+                || self.window_matches_any_rule_child(child_window).await?)
+        {
             let windows = self.niri.get_windows_raw().await?;
             if let Some(parent_window) =
-                try_pid_matching(&child_window, &windows, self.window_pid_map.clone()).await?
+                try_pid_matching(child_window, &windows, self.window_pid_map.clone()).await?
             {
                 self.record_column_display_for_swallow(&parent_window, window_id).await?;
                 perform_swallow(
                     &self.niri,
                     &parent_window,
-                    &child_window,
+                    child_window,
                     window_id,
                     ColumnDisplay::Tabbed,
                 )
                 .await?;
-                return Ok(());
+                return Ok(true);
             }
             debug!(
                 "PID matching failed for child window {} (app_id={:?}, title={}), trying rule matching",
@@ -615,7 +679,7 @@ impl SwallowPlugin {
                 rule_idx, rule.child_app_id, rule.child_title, rule.parent_app_id, rule.parent_title
             );
             // Check if child window matches rule
-            if !self.check_child_window_matches_rule(&child_window, window_id, rule).await? {
+            if !self.check_child_window_matches_rule(child_window, window_id, rule).await? {
                 debug!(
                     "Child window {} does not match rule {} criteria, skipping",
                     window_id, rule_idx
@@ -639,12 +703,12 @@ impl SwallowPlugin {
                     perform_swallow(
                         &self.niri,
                         &parent_window,
-                        &child_window,
+                        child_window,
                         window_id,
                         ColumnDisplay::Tabbed,
                     )
                     .await?;
-                    return Ok(()); // Only apply first matching rule
+                    return Ok(true); // Only apply first matching rule
                 }
                 None => {
                     warn!(
@@ -659,6 +723,47 @@ impl SwallowPlugin {
             "No matching parent window found for child window {} (app_id={:?}, title={})",
             window_id, child_window.app_id, child_window.title
         );
+
+        Ok(false)
+    }
+
+    /// Re-check swallow rules when a window's title or app_id changes.
+    ///
+    /// Some applications (e.g. Firefox extension popups) open with a generic
+    /// title ("Mozilla Firefox") and only set their real title ("Extension: ...")
+    /// afterwards, so they do not match rule criteria at open time. With
+    /// `swallow_on_change` enabled, the rules are re-evaluated whenever the
+    /// window identity changes.
+    async fn handle_window_changed(&mut self, window: &niri_ipc::Window) -> Result<()> {
+        if !self.config.swallow_on_change {
+            return Ok(());
+        }
+
+        let window_id = window.id;
+
+        // A swallowed window should stay swallowed; ignore its property changes.
+        if self.swallowed_windows.contains(&window_id) {
+            return Ok(());
+        }
+
+        let child_window = self.niri.convert_window(window).await?;
+
+        // Only act when the identity (app_id/title) actually changed, so unrelated
+        // WindowOpenedOrChanged events (layout, workspace, etc.) don't re-check.
+        let new_state = (child_window.app_id.clone(), child_window.title.clone());
+        if self.last_checked_state.get(&window_id) == Some(&new_state) {
+            return Ok(());
+        }
+        self.last_checked_state.insert(window_id, new_state);
+
+        debug!(
+            "Window {} (app_id={:?}, title={}) changed, re-checking swallow rules",
+            window_id, child_window.app_id, child_window.title
+        );
+
+        if self.try_swallow_window(&child_window).await? {
+            self.swallowed_windows.insert(window_id);
+        }
 
         Ok(())
     }
@@ -685,6 +790,7 @@ impl crate::plugins::Plugin for SwallowPlugin {
         matches!(
             event,
             crate::plugins::PiriEvent::WindowOpened { .. }
+                | crate::plugins::PiriEvent::WindowChanged { .. }
                 | crate::plugins::PiriEvent::WindowClosed { .. }
                 | crate::plugins::PiriEvent::WindowFocusTimestampChanged { .. }
         )
@@ -699,6 +805,9 @@ impl crate::plugins::Plugin for SwallowPlugin {
             crate::plugins::PiriEvent::WindowOpened { window } => {
                 self.handle_window_opened(window).await?;
             }
+            crate::plugins::PiriEvent::WindowChanged { window } => {
+                self.handle_window_changed(window).await?;
+            }
             crate::plugins::PiriEvent::WindowClosed { id } => {
                 // Remove window id from all pid entries
                 {
@@ -712,6 +821,10 @@ impl crate::plugins::Plugin for SwallowPlugin {
 
                 // Remove window id from focused window queue
                 self.focused_window_queue.retain(|&window_id| window_id != *id);
+
+                // Forget swallow/change tracking state for this window
+                self.swallowed_windows.remove(id);
+                self.last_checked_state.remove(id);
 
                 // Restore the column display mode saved before the swallow, now that
                 // the swallowed child window has closed.

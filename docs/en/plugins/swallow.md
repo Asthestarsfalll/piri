@@ -25,6 +25,8 @@ swallow = true
 [piri.swallow]
 # Enable PID-based parent-child process matching (default: true)
 use_pid_matching = true
+# Re-check swallow rules when a window's title/app_id changes (default: false)
+swallow_on_change = false
 
 # Global exclude rule: windows matching these conditions will never be swallowed
 [piri.swallow.exclude]
@@ -50,6 +52,7 @@ The following global parameters can be configured in `[piri.swallow]`:
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
 | `use_pid_matching` | `bool` | Enable PID-based parent-child process matching (default: `true`) |
+| `swallow_on_change` | `bool` | Re-check swallow rules when a window's `title` or `app_id` changes (default: `false`) |
 | `exclude` | `SwallowExclude` | Global exclude rule, windows matching these conditions will never be swallowed (optional) |
 
 ### Rule Configuration Parameters
@@ -199,6 +202,28 @@ parent_title = [".*Terminal.*"]
 child_title = [".*Video Player.*"]
 ```
 
+### Swallow When the Window Title Changes
+
+Some applications open with a generic title and only set their real title afterwards — for example Firefox extension windows (Bitwarden, aria2 downloader, etc.) open as `Mozilla Firefox` and update to `Extension: ...` once fully loaded. Since the rule only matches the final title, the window does not match at open time.
+
+Set `swallow_on_change = true` to re-run the swallow rules whenever a window's `title` or `app_id` changes:
+
+```toml
+[piri.swallow]
+use_pid_matching = true
+swallow_on_change = true
+
+[[swallow]]
+child_title = ".*Extension:.*"
+parent_title = ".*firefox.*"
+```
+
+The window opens as `Mozilla Firefox` (no match, not swallowed), and once its title updates to e.g. `Extension: Bitwarden`, the plugin re-checks the rules and swallows it into the matching Firefox parent. Normal Firefox windows are unaffected.
+
+Notes:
+- When rules are configured, PID matching only swallows windows that match at least one rule's child criteria, so the final title is respected instead of the window being swallowed at open time.
+- Windows that were already swallowed are skipped on later changes, and unrelated property changes (layout, workspace, etc.) do not trigger re-checks.
+
 ### Complex Example: Multiple Patterns
 
 ```toml
@@ -211,6 +236,7 @@ child_app_id = ["mpv", "imv", "feh", "sxiv"]
 
 - If no rules are specified, the plugin is enabled but won't match any windows
 - `use_pid_matching` defaults to `true` if not specified
+- `swallow_on_change` defaults to `false` if not specified
 - If `exclude` is not specified, no global exclusion is performed
 - If no child conditions are specified, the rule will match any child window and look for parents
 - If no parent conditions are specified (with PID matching enabled), any ancestor window will match

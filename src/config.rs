@@ -113,6 +113,10 @@ pub struct SwallowSection {
     pub rules: Vec<crate::plugins::swallow::SwallowRule>,
     #[serde(default = "default_true")]
     pub use_pid_matching: bool,
+    /// Re-check swallow rules when a window's title or app_id changes
+    /// (e.g. Firefox extension windows that set their real title after opening).
+    #[serde(default)]
+    pub swallow_on_change: bool,
     #[serde(default)]
     pub exclude: Option<crate::plugins::swallow::SwallowExclude>,
 }
@@ -126,6 +130,7 @@ impl Default for SwallowSection {
         Self {
             rules: Vec::new(),
             use_pid_matching: default_true(),
+            swallow_on_change: false,
             exclude: None,
         }
     }
@@ -984,6 +989,7 @@ workspaces = ["1", "2", "dev"]
     fn test_swallow_section_default() {
         let config: SwallowSection = toml::from_str("").unwrap();
         assert!(config.use_pid_matching);
+        assert!(!config.swallow_on_change);
         assert!(config.rules.is_empty());
         assert!(config.exclude.is_none());
     }
@@ -992,6 +998,7 @@ workspaces = ["1", "2", "dev"]
     fn test_swallow_section_custom() {
         let toml = r#"
 use_pid_matching = false
+swallow_on_change = true
 
 [[rules]]
 child_app_id = ".*chrome.*"
@@ -1002,6 +1009,7 @@ app_id = ".*mpv.*"
 "#;
         let config: SwallowSection = toml::from_str(toml).unwrap();
         assert!(!config.use_pid_matching);
+        assert!(config.swallow_on_change);
         assert_eq!(config.rules.len(), 1);
         assert!(config.exclude.is_some());
     }
